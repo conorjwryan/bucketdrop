@@ -586,24 +586,22 @@ struct ContentView: View {
 
     // MARK: - Download
 
+    /// Saves straight into the destination's download folder (its custom
+    /// folder when set, otherwise ~/Downloads) — no save panel.
     private func downloadToDownloads(_ item: RecentItem) async {
         guard let cfg = config.s3Config(for: item.destination) else { return }
         let object = item.object
 
-        let savePanel = NSSavePanel()
-        savePanel.nameFieldStringValue = object.filename
-        savePanel.canCreateDirectories = true
-        savePanel.isExtensionHidden = false
+        let (folder, isScoped) = ConfigStore.downloadDirectory(for: item.destination)
+        let accessing = isScoped && folder.startAccessingSecurityScopedResource()
+        defer { if accessing { folder.stopAccessingSecurityScopedResource() } }
 
-        NSApp.activate(ignoringOtherApps: true)
-        let response = await savePanel.begin()
-
-        guard response == .OK, let destination = savePanel.url else { return }
+        let target = uniqueTarget(in: folder, filename: object.filename)
 
         if let cachedURL = getCachedFile(for: object) {
             do {
-                try FileManager.default.copyItem(at: cachedURL, to: destination)
-                NSWorkspace.shared.selectFile(destination.path, inFileViewerRootedAtPath: "")
+                try FileManager.default.copyItem(at: cachedURL, to: target)
+                NSWorkspace.shared.selectFile(target.path, inFileViewerRootedAtPath: "")
                 return
             } catch {
                 // Cache copy failed, fall through to download
@@ -621,13 +619,30 @@ struct ContentView: View {
                 }
             }
 
-            try FileManager.default.copyItem(at: savedURL, to: destination)
+            try FileManager.default.copyItem(at: savedURL, to: target)
             downloadingObjectKey = nil
-            NSWorkspace.shared.selectFile(destination.path, inFileViewerRootedAtPath: "")
+            NSWorkspace.shared.selectFile(target.path, inFileViewerRootedAtPath: "")
         } catch {
             downloadingObjectKey = nil
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// "photo.png" → "photo (1).png" etc. until the name is free.
+    private func uniqueTarget(in folder: URL, filename: String) -> URL {
+        let fileManager = FileManager.default
+        var target = folder.appendingPathComponent(filename)
+        guard fileManager.fileExists(atPath: target.path) else { return target }
+
+        let base = (filename as NSString).deletingPathExtension
+        let ext = (filename as NSString).pathExtension
+        var counter = 1
+        repeat {
+            let name = ext.isEmpty ? "\(base) (\(counter))" : "\(base) (\(counter)).\(ext)"
+            target = folder.appendingPathComponent(name)
+            counter += 1
+        } while fileManager.fileExists(atPath: target.path)
+        return target
     }
 
     // MARK: - Preview with Quick Look

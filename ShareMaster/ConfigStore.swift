@@ -50,6 +50,9 @@ struct Destination: Codable, Identifiable, Hashable {
     var uploadCapMBps: Double? = nil
     var downloadCapMBps: Double? = nil
     var maxConcurrentParts: Int? = nil
+    /// Security-scoped bookmark of a custom download folder (nil = the user's
+    /// Downloads folder). Stored as a bookmark because the app is sandboxed.
+    var downloadDirBookmark: Data? = nil
 }
 
 enum RecentScope: String, Codable, CaseIterable, Identifiable {
@@ -239,6 +242,25 @@ final class ConfigStore {
 
     func secret(for accountId: UUID) -> String {
         keychainGet(key: secretKey(accountId)) ?? ""
+    }
+
+    /// Resolves a destination's download folder. Returns the URL plus whether
+    /// it is security-scoped (caller must start/stop accessing around use).
+    nonisolated static func downloadDirectory(for destination: Destination) -> (url: URL, isScoped: Bool) {
+        if let data = destination.downloadDirBookmark {
+            var stale = false
+            if let url = try? URL(
+                resolvingBookmarkData: data,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            ) {
+                return (url, true)
+            }
+        }
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+        return (downloads, false)
     }
 
     /// Deletes an account only if no destinations reference it.

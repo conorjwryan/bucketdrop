@@ -381,6 +381,23 @@ struct DestinationEditor: View {
             }
 
             Section {
+                LabeledContent("Save downloads to") {
+                    Text(downloadFolderLabel)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                HStack {
+                    Button("Choose Folder…") { chooseDownloadFolder() }
+                    if destination.downloadDirBookmark != nil {
+                        Button("Use Downloads Folder") { destination.downloadDirBookmark = nil }
+                    }
+                }
+            } header: {
+                Text("Downloads")
+            }
+
+            Section {
                 Toggle("Override account transfer settings", isOn: $overrideTransfers)
                 if overrideTransfers {
                     TextField("Upload limit (MB/s)", value: $destination.uploadCapMBps, format: .number, prompt: Text("Account default"))
@@ -410,6 +427,29 @@ struct DestinationEditor: View {
             }
         }
         .onAppear(perform: loadExpiry)
+    }
+
+    private var downloadFolderLabel: String {
+        guard destination.downloadDirBookmark != nil else { return "Downloads" }
+        let (url, _) = ConfigStore.downloadDirectory(for: destination)
+        return (url.path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func chooseDownloadFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Security-scoped bookmark keeps write access across launches.
+        destination.downloadDirBookmark = try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
     }
 
     private func loadExpiry() {

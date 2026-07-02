@@ -92,6 +92,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// True while the popover is open because a drag hovered over the menu bar
     /// icon (rather than a click). Used to auto-close it once the upload ends.
     private var popoverOpenedByDrag = false
+    private var popoverTeardown: DispatchWorkItem?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -137,11 +138,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.popoverOpenedByDrag = false
         }
         
-        // Setup popover
+        // Setup popover. Content is built lazily on first open and torn down
+        // shortly after close, so an idle ShareMaster holds no SwiftUI
+        // hierarchy, thumbnails, or list state in memory.
         popover = NSPopover()
         popover?.behavior = .semitransient
         popover?.animates = true
 
+        NotificationCenter.default.addObserver(
+            forName: NSPopover.didCloseNotification, object: popover, queue: .main
+        ) { [weak self] _ in
+            // Clear the drag flag so a later click-opened popover doesn't
+            // auto-close after an unrelated upload.
+            self?.popoverOpenedByDrag = false
+            self?.schedulePopoverTeardown()
+        }
+    }
+
+    private func makePopoverContentViewController() -> NSViewController {
         let contentView = ContentView()
             .modelContainer(modelContainer!)
             .environment(\.openSettingsAction, OpenSettingsAction { [weak self] in
@@ -151,16 +165,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Let the popover track the SwiftUI content size, so it shrinks when
         // the recents section is collapsed and grows when it's expanded.
         hosting.sizingOptions = [.preferredContentSize]
-        popover?.contentViewController = hosting
+        return hosting
+    }
 
-        // If a drag-opened popover is dismissed some other way (click outside,
-        // drag abandoned), clear the flag so a later click-opened popover
-        // doesn't auto-close after an unrelated upload.
-        NotificationCenter.default.addObserver(
-            forName: NSPopover.didCloseNotification, object: popover, queue: .main
-        ) { [weak self] _ in
-            self?.popoverOpenedByDrag = false
+    /// Frees the popover's SwiftUI hierarchy a minute after it closes. The
+    /// delay keeps quick re-opens instant and avoids tearing down mid-upload
+    /// UI (transfers themselves run in S3Service and are unaffected).
+    private func schedulePopoverTeardown() {
+        popoverTeardown?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.popover?.isShown != true else { return }
+            self.popover?.contentViewController = nil
+            self.popoverBackgroundView = nil
         }
+        popoverTeardown = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: work)
     }
     
     @objc func togglePopover() {
@@ -176,6 +195,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showPopover() {
         guard let popover = popover, let button = statusItem?.button, !popover.isShown else { return }
+
+        popoverTeardown?.cancel()
+        if popover.contentViewController == nil {
+            popover.contentViewController = makePopoverContentViewController()
+        }
 
         // Pinned popovers survive focus changes; unpinned ones close as soon
         // as the user interacts with anything else.

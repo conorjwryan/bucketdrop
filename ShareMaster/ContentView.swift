@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 import Combine
 import AppKit
 import Quartz
+import ImageIO
 
 // Model to track individual file upload state
 struct UploadTask: Identifiable {
@@ -82,13 +83,17 @@ struct ContentView: View {
         }
         .frame(width: 560, height: config.recentsExpanded ? 460 : 212, alignment: .top)
         .task {
-            if selectedDestinationID == nil { selectedDestinationID = destinations.first?.id }
+            if selectedDestinationID == nil {
+                let remembered = config.lastSelectedDestinationID
+                selectedDestinationID = destinations.first { $0.id == remembered }?.id ?? destinations.first?.id
+            }
             if config.recentsExpanded { await loadRecent() }
         }
         .onChange(of: config.recentsExpanded) { _, expanded in
             if expanded { Task { await loadRecent() } }
         }
-        .onChange(of: selectedDestinationID) { _, _ in
+        .onChange(of: selectedDestinationID) { _, newValue in
+            if let newValue { config.lastSelectedDestinationID = newValue }
             if config.recentsExpanded && config.recentScope == .perDestination {
                 Task { await loadRecent() }
             }
@@ -842,6 +847,10 @@ final class ImageCache {
     static let shared = ImageCache()
     private let cache = NSCache<NSURL, NSImage>()
 
+    private init() {
+        cache.countLimit = 300
+    }
+
     func image(for url: URL) -> NSImage? {
         cache.object(forKey: url as NSURL)
     }
@@ -865,7 +874,9 @@ final class ImageLoader: ObservableObject {
         task = Task {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                guard let image = NSImage(data: data) else {
+                // Decode straight to a small thumbnail — a 12 MP photo decodes
+                // to ~48 MB of bitmap, all to draw a 32 pt row icon.
+                guard let image = Self.downsampledImage(from: data, maxPixel: 96) else {
                     await MainActor.run { self.state = .failure }
                     return
                 }
@@ -880,6 +891,23 @@ final class ImageLoader: ObservableObject {
     func cancel() {
         task?.cancel()
         task = nil
+    }
+
+    nonisolated private static func downsampledImage(from data: Data, maxPixel: CGFloat) -> NSImage? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+            return NSImage(data: data)
+        }
+        let thumbOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) else {
+            return NSImage(data: data)
+        }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 }
 

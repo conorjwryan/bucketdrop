@@ -102,6 +102,7 @@ final class ConfigStore {
         static let pinPopover = "config_pin_popover"
         static let recentLimit = "config_recent_limit"
         static let recentsExpanded = "config_recents_expanded"
+        static let lastSelectedDestination = "config_last_selected_destination"
     }
 
     private(set) var accounts: [Account] = [] {
@@ -132,6 +133,12 @@ final class ConfigStore {
         didSet { defaults.set(recentsExpanded, forKey: Keys.recentsExpanded) }
     }
 
+    /// Remembered across popover teardowns (the content view is released a
+    /// minute after the popover closes to keep idle memory low).
+    var lastSelectedDestinationID: UUID? {
+        didSet { defaults.set(lastSelectedDestinationID?.uuidString, forKey: Keys.lastSelectedDestination) }
+    }
+
     var isConfigured: Bool { !destinations.isEmpty }
 
     private init() {
@@ -145,6 +152,9 @@ final class ConfigStore {
         let storedLimit = defaults.integer(forKey: Keys.recentLimit)
         if storedLimit > 0 { recentLimit = storedLimit }
         recentsExpanded = defaults.bool(forKey: Keys.recentsExpanded)
+        if let raw = defaults.string(forKey: Keys.lastSelectedDestination) {
+            lastSelectedDestinationID = UUID(uuidString: raw)
+        }
         migrateLegacyConfigIfNeeded()
     }
 

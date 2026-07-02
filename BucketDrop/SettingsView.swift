@@ -82,6 +82,16 @@ struct SettingsView: View {
             
             Section {
                 HStack {
+                    Spacer()
+                    Button("Quit BucketDrop") {
+                        NSApp.terminate(nil)
+                    }
+                    Spacer()
+                }
+            }
+
+            Section {
+                HStack {
                     AsyncImage(url: URL(string: "https://github.com/fayazara.png")) { image in
                         image
                             .resizable()

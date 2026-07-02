@@ -101,7 +101,7 @@ final class SettingsManager {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
-            kSecAttrService as String: "com.fayazahmed.BucketDrop"
+            kSecAttrService as String: "com.cjwr.BucketDrop"
         ]
         
         SecItemDelete(query as CFDictionary)
@@ -115,7 +115,7 @@ final class SettingsManager {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
-            kSecAttrService as String: "com.fayazahmed.BucketDrop",
+            kSecAttrService as String: "com.cjwr.BucketDrop",
             kSecReturnData as String: true
         ]
         

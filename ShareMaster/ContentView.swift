@@ -41,6 +41,7 @@ struct RecentItem: Identifiable {
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openSettingsAction) private var openSettings
+    @Environment(\.openSettings) private var openNativeSettings
 
     var config = ConfigStore.shared
 
@@ -121,7 +122,8 @@ struct ContentView: View {
             Spacer()
             HStack(spacing: 12) {
                 Button {
-                    openSettings()
+                    openSettings()          // closes popover + activates app
+                    openNativeSettings()    // opens the native Settings scene
                 } label: {
                     Image(systemName: "gear")
                 }
@@ -154,6 +156,7 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
             Button("Open Settings") {
                 openSettings()
+                openNativeSettings()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

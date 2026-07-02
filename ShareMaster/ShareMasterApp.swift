@@ -88,7 +88,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     var modelContainer: ModelContainer?
-    var settingsWindow: NSWindow?
     var popoverBackgroundView: PopoverBackgroundView?
     /// True while the popover is open because a drag hovered over the menu bar
     /// icon (rather than a click). Used to auto-close it once the upload ends.
@@ -198,38 +197,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    /// Prepares for the native SwiftUI Settings scene to open: the caller
+    /// (a SwiftUI view) invokes `@Environment(\.openSettings)` right after.
     func openSettings() {
-        // Close popover first
         popover?.performClose(nil)
-        
-        // Check if settings window already exists
-        if let window = settingsWindow, window.isVisible {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        
-        // Create settings window
-        let settingsView = SettingsView()
-        let hostingController = NSHostingController(rootView: settingsView)
-        
-        let window = NSWindow(contentViewController: hostingController)
-        window.title = "ShareMaster Settings"
-        window.styleMask = [.titled, .closable]
-        window.isReleasedWhenClosed = false
-        
-        // Center the window on screen
-        if let screen = NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            let windowSize = window.frame.size
-            let x = screenFrame.origin.x + (screenFrame.width - windowSize.width) / 2
-            let y = screenFrame.origin.y + (screenFrame.height - windowSize.height) / 2
-            window.setFrameOrigin(NSPoint(x: x, y: y))
-        }
-        
-        settingsWindow = window
-        
-        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 }

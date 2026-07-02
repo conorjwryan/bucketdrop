@@ -78,6 +78,7 @@ final class ConfigStore {
         static let accounts = "config_accounts"
         static let destinations = "config_destinations"
         static let recentScope = "config_recent_scope"
+        static let pinPopover = "config_pin_popover"
     }
 
     private(set) var accounts: [Account] = [] {
@@ -90,6 +91,12 @@ final class ConfigStore {
         didSet { defaults.set(recentScope.rawValue, forKey: Keys.recentScope) }
     }
 
+    /// When true the popover stays open while other apps have focus
+    /// (semitransient). Default false: it closes as soon as focus moves away.
+    var pinPopover: Bool = false {
+        didSet { defaults.set(pinPopover, forKey: Keys.pinPopover) }
+    }
+
     var isConfigured: Bool { !destinations.isEmpty }
 
     private init() {
@@ -99,6 +106,7 @@ final class ConfigStore {
            let scope = RecentScope(rawValue: raw) {
             recentScope = scope
         }
+        pinPopover = defaults.bool(forKey: Keys.pinPopover)
         migrateLegacyConfigIfNeeded()
     }
 

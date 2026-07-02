@@ -175,6 +175,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showPopover() {
         guard let popover = popover, let button = statusItem?.button, !popover.isShown else { return }
 
+        // Pinned popovers survive focus changes; unpinned ones close as soon
+        // as the user interacts with anything else.
+        popover.behavior = ConfigStore.shared.pinPopover ? .semitransient : .transient
+
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
 

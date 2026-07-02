@@ -16,13 +16,15 @@
 
 import Foundation
 
-enum NamingTemplate {
+// Pure string helpers with no shared state, so exempt from the project's
+// default MainActor isolation (S3Service's actor calls expand()).
+nonisolated enum NamingTemplate {
     static let allTokens = ["{uuid}", "{name}", "{ext}", "{date}", "{time}", "{datetime}"]
     static let `default` = "{uuid}-{name}"
 
     /// Expands `template` for `filename`, returning the object key basename
     /// (no path prefix). `now` is injectable for previews/tests.
-    static func expand(_ template: String, filename: String, now: Date = Date()) -> String {
+    nonisolated static func expand(_ template: String, filename: String, now: Date = Date()) -> String {
         let base = template.isEmpty ? NamingTemplate.default : template
         let nsName = filename as NSString
         let ext = nsName.pathExtension.lowercased()

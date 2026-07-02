@@ -37,7 +37,7 @@ actor S3Service {
 
         try await putObject(key: key, data: data, contentType: contentType, config: config, progress: progress)
 
-        let url = try await shareLink(for: key, config: config)
+        let url = try shareLink(for: key, config: config)
         return UploadResult(key: key, url: url)
     }
 
@@ -675,19 +675,19 @@ struct S3Object: Identifiable {
 }
 
 extension SHA256Digest {
-    var hexString: String {
+    nonisolated var hexString: String {
         self.map { String(format: "%02x", $0) }.joined()
     }
 }
 
 extension Data {
-    var hexString: String {
+    nonisolated var hexString: String {
         self.map { String(format: "%02x", $0) }.joined()
     }
 }
 
 extension S3Config {
-    var isConfigured: Bool {
+    nonisolated var isConfigured: Bool {
         !accessKeyId.isEmpty && !secretAccessKey.isEmpty && !bucket.isEmpty
     }
 }

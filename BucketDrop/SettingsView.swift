@@ -11,12 +11,12 @@ import AppKit
 struct SettingsView: View {
     var body: some View {
         TabView {
+            GeneralSettingsView()
+                .tabItem { Label("General", systemImage: "gearshape") }
             AccountsSettingsView()
                 .tabItem { Label("Accounts", systemImage: "key") }
             DestinationsSettingsView()
                 .tabItem { Label("Destinations", systemImage: "tray.full") }
-            GeneralSettingsView()
-                .tabItem { Label("General", systemImage: "gearshape") }
             AboutSettingsView()
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
@@ -406,6 +406,15 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Keep window open when switching apps", isOn: Binding(
+                    get: { config.pinPopover },
+                    set: { config.pinPopover = $0 }
+                ))
+            } footer: {
+                Text("When off, the BucketDrop window closes as soon as you click another window or switch apps. When on, it stays on top until you close it yourself.")
+            }
+
             Section {
                 Picker("Recent uploads list", selection: Binding(
                     get: { config.recentScope },

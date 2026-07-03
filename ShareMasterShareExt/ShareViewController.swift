@@ -13,6 +13,10 @@ final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
+        // The extension process survives between share-sheet presentations,
+        // so pick up any account/destination edits made in the main app.
+        ConfigStore.shared.reloadFromDefaults()
+
         let rootView = ShareUploadView(
             extensionItems: (extensionContext?.inputItems as? [NSExtensionItem]) ?? [],
             onFinish: { [weak self] error in

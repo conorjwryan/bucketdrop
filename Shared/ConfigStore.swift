@@ -243,6 +243,21 @@ final class ConfigStore {
         adoptCloudIfNewer()
     }
 
+    /// Re-reads the persisted config from defaults. The share extension's
+    /// process is kept alive between invocations, so its in-memory copy goes
+    /// stale when the main app edits accounts/destinations — call this each
+    /// time the extension UI appears.
+    func reloadFromDefaults() {
+        isAdoptingCloud = true
+        accounts = load([Account].self, key: Keys.accounts) ?? []
+        destinations = load([Destination].self, key: Keys.destinations) ?? []
+        isAdoptingCloud = false
+        if let raw = defaults.string(forKey: Keys.lastSelectedDestination) {
+            lastSelectedDestinationID = UUID(uuidString: raw)
+        }
+        adoptCloudIfNewer()
+    }
+
     private func pushToCloud() {
         let payload = CloudPayload(
             accounts: accounts,

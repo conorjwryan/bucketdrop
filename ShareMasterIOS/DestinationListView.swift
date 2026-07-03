@@ -9,6 +9,7 @@
 import SwiftUI
 
 struct DestinationListView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var config = ConfigStore.shared
     @State private var showSettings = false
 
@@ -40,6 +41,10 @@ struct DestinationListView: View {
             }
             .sheet(isPresented: $showSettings) {
                 IOSSettingsView()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // Pick up config synced from the Mac via iCloud Keychain.
+                if phase == .active { config.refreshFromCloud() }
             }
         }
     }

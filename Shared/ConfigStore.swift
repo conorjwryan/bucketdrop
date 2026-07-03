@@ -113,6 +113,12 @@ final class ConfigStore {
     /// see the same accounts/destinations. Unused on macOS.
     nonisolated static let appGroupID = "group.com.cjwr.ShareMaster"
 
+    /// Keychain access group shared by the Mac app, iOS app and extension
+    /// (same team). Items here are kSecAttrSynchronizable, so iCloud Keychain
+    /// carries the credentials between devices. Must match the
+    /// $(AppIdentifierPrefix)-prefixed group in every target's entitlements.
+    nonisolated static let syncKeychainGroup = "HU9TH52NNC.com.cjwr.ShareMaster.sync"
+
     #if os(iOS)
     private let defaults = UserDefaults(suiteName: ConfigStore.appGroupID) ?? .standard
     #else
@@ -128,13 +134,20 @@ final class ConfigStore {
         static let recentLimit = "config_recent_limit"
         static let recentsExpanded = "config_recents_expanded"
         static let lastSelectedDestination = "config_last_selected_destination"
+        static let cloudUpdatedAt = "config_cloud_updated_at"
     }
 
     private(set) var accounts: [Account] = [] {
-        didSet { persist(accounts, key: Keys.accounts) }
+        didSet {
+            persist(accounts, key: Keys.accounts)
+            if !isAdoptingCloud { pushToCloud() }
+        }
     }
     private(set) var destinations: [Destination] = [] {
-        didSet { persist(destinations, key: Keys.destinations) }
+        didSet {
+            persist(destinations, key: Keys.destinations)
+            if !isAdoptingCloud { pushToCloud() }
+        }
     }
     var recentScope: RecentScope = .perDestination {
         didSet { defaults.set(recentScope.rawValue, forKey: Keys.recentScope) }
@@ -181,6 +194,69 @@ final class ConfigStore {
             lastSelectedDestinationID = UUID(uuidString: raw)
         }
         migrateLegacyConfigIfNeeded()
+        startCloudSync()
+    }
+
+    // MARK: - iCloud sync (via iCloud Keychain)
+
+    /// The whole config (accounts + destinations + timestamp) syncs between
+    /// devices as ONE synchronizable keychain item, alongside the per-account
+    /// secret items. iCloud Keychain is the only sync channel available to a
+    /// personal (free) developer team — KVS/CloudKit require a paid account.
+    /// The keychain posts no change notifications, so callers re-check via
+    /// refreshFromCloud() on launch and when coming to the foreground.
+    private var isAdoptingCloud = false
+    private static let cloudPayloadKey = "cloud_config_payload"
+
+    private struct CloudPayload: Codable {
+        var accounts: [Account]
+        var destinations: [Destination]
+        var updatedAt: Double
+    }
+
+    /// Timestamp of the cloud payload this device last wrote or adopted.
+    private var localUpdatedAt: Double {
+        get { defaults.double(forKey: Keys.cloudUpdatedAt) }
+        set { defaults.set(newValue, forKey: Keys.cloudUpdatedAt) }
+    }
+
+    private func startCloudSync() {
+        adoptCloudIfNewer()
+        // Seed the cloud from a device that was configured before sync existed.
+        if keychainGet(key: Self.cloudPayloadKey) == nil,
+           !accounts.isEmpty || !destinations.isEmpty {
+            pushToCloud()
+        }
+    }
+
+    /// Adopts remote changes if another device has pushed a newer config.
+    /// Call when the UI (re)appears; cheap when nothing changed.
+    func refreshFromCloud() {
+        adoptCloudIfNewer()
+    }
+
+    private func pushToCloud() {
+        let payload = CloudPayload(
+            accounts: accounts,
+            destinations: destinations,
+            updatedAt: Date().timeIntervalSince1970
+        )
+        guard let data = try? JSONEncoder().encode(payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        localUpdatedAt = payload.updatedAt
+        keychainSet(key: Self.cloudPayloadKey, value: json)
+    }
+
+    private func adoptCloudIfNewer() {
+        guard let json = keychainGet(key: Self.cloudPayloadKey),
+              let payload = try? JSONDecoder().decode(CloudPayload.self, from: Data(json.utf8)),
+              payload.updatedAt > localUpdatedAt
+        else { return }
+        isAdoptingCloud = true
+        accounts = payload.accounts
+        destinations = payload.destinations
+        isAdoptingCloud = false
+        localUpdatedAt = payload.updatedAt
     }
 
     // MARK: - Queries
@@ -371,10 +447,28 @@ final class ConfigStore {
 
     // MARK: - Keychain
 
-    /// Base query shared by all keychain operations. On iOS the items are
-    /// stored in the App Group access group so the share extension can read
-    /// the same credentials as the app.
+    /// Base query for the current storage: synchronizable items in the shared
+    /// access group, so iCloud Keychain syncs the credentials across devices
+    /// and every target (Mac app, iOS app, share extension) reads them.
     private func keychainBaseQuery(key: String) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccessGroup as String: Self.syncKeychainGroup,
+            kSecAttrSynchronizable as String: true
+        ]
+        #if os(macOS)
+        // Synchronizable items require the data-protection (iOS-style)
+        // keychain on macOS.
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return query
+    }
+
+    /// Where secrets lived before iCloud sync: the default (login) keychain on
+    /// macOS, the App Group access group on iOS.
+    private func legacyKeychainQuery(key: String) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
@@ -387,28 +481,47 @@ final class ConfigStore {
     }
 
     private func keychainSet(key: String, value: String) {
+        let data = value.data(using: .utf8)!
         let query = keychainBaseQuery(key: key)
         SecItemDelete(query as CFDictionary)
         var newQuery = query
-        newQuery[kSecValueData as String] = value.data(using: .utf8)!
-        #if os(iOS)
-        // Readable by the share extension while the device is locked
-        // (e.g. sharing right after a screenshot on the lock screen).
+        newQuery[kSecValueData as String] = data
+        // AfterFirstUnlock (the strictest level synchronizable items support)
+        // keeps secrets readable by the share extension right after a
+        // screenshot, even from the lock screen.
         newQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        #endif
-        SecItemAdd(newQuery as CFDictionary, nil)
+        let status = SecItemAdd(newQuery as CFDictionary, nil)
+        if status == errSecMissingEntitlement {
+            // Build isn't provisioned for the sync group (e.g. ad-hoc/dev
+            // signing) — fall back to a device-local item so nothing is lost.
+            var legacy = legacyKeychainQuery(key: key)
+            SecItemDelete(legacy as CFDictionary)
+            legacy[kSecValueData as String] = data
+            SecItemAdd(legacy as CFDictionary, nil)
+        }
     }
 
     private func keychainGet(key: String) -> String? {
         var query = keychainBaseQuery(key: key)
         query[kSecReturnData as String] = true
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+           let data = result as? Data, let value = String(data: data, encoding: .utf8) {
+            return value
+        }
+        // Pre-sync item: read the old location and upgrade it in place.
+        var legacy = legacyKeychainQuery(key: key)
+        legacy[kSecReturnData as String] = true
+        var legacyResult: AnyObject?
+        guard SecItemCopyMatching(legacy as CFDictionary, &legacyResult) == errSecSuccess,
+              let data = legacyResult as? Data,
+              let value = String(data: data, encoding: .utf8) else { return nil }
+        keychainSet(key: key, value: value)
+        return value
     }
 
     private func keychainDelete(key: String) {
         SecItemDelete(keychainBaseQuery(key: key) as CFDictionary)
+        SecItemDelete(legacyKeychainQuery(key: key) as CFDictionary)
     }
 }

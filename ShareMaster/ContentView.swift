@@ -83,6 +83,9 @@ struct ContentView: View {
         }
         .frame(width: 560, height: config.recentsExpanded ? 460 : 212, alignment: .top)
         .task {
+            // Popover content is rebuilt on each open, so this also picks up
+            // config changes synced from other devices via iCloud Keychain.
+            config.refreshFromCloud()
             if selectedDestinationID == nil {
                 let remembered = config.lastSelectedDestinationID
                 selectedDestinationID = destinations.first { $0.id == remembered }?.id ?? destinations.first?.id

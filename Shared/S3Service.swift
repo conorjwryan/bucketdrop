@@ -15,6 +15,44 @@ actor S3Service {
         var errorDescription: String? { message }
     }
 
+    /// Builds a user-facing error from an S3 error response, translating the
+    /// XML <Code>/<Message> body into plain language for common failures.
+    private func s3Error(_ operation: String, status: Int, body: Data) -> S3Error {
+        let xml = String(data: body, encoding: .utf8) ?? ""
+        let code = Self.xmlValue("Code", in: xml)
+        let detail: String
+        switch code {
+        case "AccessDenied":
+            detail = "access denied. This account doesn't have permission for this bucket — check its credentials and the bucket's policy."
+        case "NoSuchBucket":
+            detail = "the bucket doesn't exist. Check the bucket name and region."
+        case "InvalidAccessKeyId":
+            detail = "the access key ID isn't recognised. Check the account's credentials."
+        case "SignatureDoesNotMatch":
+            detail = "the request was rejected. Check the account's secret key."
+        case "NoSuchKey":
+            detail = "the file no longer exists."
+        default:
+            if let message = Self.xmlValue("Message", in: xml) {
+                detail = message
+            } else if let code {
+                detail = "\(code) (HTTP \(status))"
+            } else {
+                detail = "HTTP \(status)"
+            }
+        }
+        return S3Error(message: "\(operation) failed: \(detail)")
+    }
+
+    private static func xmlValue(_ tag: String, in xml: String) -> String? {
+        guard let start = xml.range(of: "<\(tag)>"),
+              let end = xml.range(of: "</\(tag)>"),
+              start.upperBound <= end.lowerBound else { return nil }
+        let value = String(xml[start.upperBound..<end.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
     struct UploadResult {
         let key: String
         let url: String
@@ -114,8 +152,7 @@ actor S3Service {
         }
 
         guard httpResponse.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw S3Error(message: "List failed: \(httpResponse.statusCode) - \(body)")
+            throw s3Error("List", status: httpResponse.statusCode, body: data)
         }
 
         return parseListResponse(data)
@@ -391,8 +428,7 @@ actor S3Service {
         }
 
         guard httpResponse.statusCode == 204 || httpResponse.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw S3Error(message: "Delete failed: \(httpResponse.statusCode) - \(body)")
+            throw s3Error("Delete", status: httpResponse.statusCode, body: data)
         }
     }
 
@@ -467,8 +503,7 @@ actor S3Service {
         }
 
         guard httpResponse.statusCode == 200 else {
-            let body = String(data: responseData, encoding: .utf8) ?? ""
-            throw S3Error(message: "Upload failed: \(httpResponse.statusCode) - \(body)")
+            throw s3Error("Upload", status: httpResponse.statusCode, body: responseData)
         }
 
         progress?(1)
@@ -606,9 +641,8 @@ actor S3Service {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? ""
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw S3Error(message: "Create multipart upload failed: \(code) - \(body)")
+            throw s3Error("Create multipart upload", status: code, body: data)
         }
 
         guard let xml = String(data: data, encoding: .utf8),
@@ -658,9 +692,8 @@ actor S3Service {
         )
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            let body = String(data: responseData, encoding: .utf8) ?? ""
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw S3Error(message: "Upload part \(partNumber) failed: \(code) - \(body)")
+            throw s3Error("Upload part \(partNumber)", status: code, body: responseData)
         }
         guard let etag = httpResponse.value(forHTTPHeaderField: "ETag"), !etag.isEmpty else {
             throw S3Error(message: "Upload part \(partNumber): missing ETag")
@@ -708,7 +741,7 @@ actor S3Service {
               !body.contains("<Error>") else {
             // S3 can return 200 with an <Error> body for Complete.
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw S3Error(message: "Complete multipart upload failed: \(code) - \(body)")
+            throw s3Error("Complete multipart upload", status: code, body: data)
         }
     }
 

@@ -11,3 +11,6 @@ dist/
 # File Types
 *.xcuserstate
 
+# Plans (local only)
+plans/*.md
+

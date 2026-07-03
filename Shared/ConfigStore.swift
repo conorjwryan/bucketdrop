@@ -221,6 +221,14 @@ final class ConfigStore {
     }
 
     private func startCloudSync() {
+        // Force-read every account's secrets: keychainGet upgrades legacy
+        // (device-local) items into the synchronizable group as a side
+        // effect, so a device configured before sync existed publishes its
+        // credentials at launch instead of waiting for a lazy read.
+        for account in accounts {
+            _ = keychainGet(key: accessKeyIdKey(account.id))
+            _ = keychainGet(key: secretKey(account.id))
+        }
         adoptCloudIfNewer()
         // Seed the cloud from a device that was configured before sync existed.
         if keychainGet(key: Self.cloudPayloadKey) == nil,

@@ -233,7 +233,7 @@ struct ContentView: View {
                         openNativeSettings()
                     }
                 }
-                .onDrop(of: [.fileURL], isTargeted: Binding(
+                .onDrop(of: [.fileURL, .image], isTargeted: Binding(
                     get: { dropTargetID == destination.id },
                     set: { targeted in
                         if targeted {
@@ -272,7 +272,7 @@ struct ContentView: View {
                 .onTapGesture {
                     if !isUploading { openFilePicker(destination) }
                 }
-                .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+                .onDrop(of: [.fileURL, .image], isTargeted: $isTargeted) { providers in
                     guard !isUploading else { return false }
                     NSApp.activate(ignoringOtherApps: true)
                     handleDrop(providers, to: destination)
@@ -400,10 +400,9 @@ struct ContentView: View {
 
         for provider in providers {
             group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, error in
+            Self.resolveDroppedFileURL(from: provider) { url in
                 defer { group.leave() }
-                guard let data = data as? Data,
-                      let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                guard let url else { return }
                 lock.lock()
                 collectedURLs.append(url)
                 lock.unlock()
@@ -412,8 +411,89 @@ struct ContentView: View {
 
         group.notify(queue: .main) {
             Task { @MainActor in
+                guard !collectedURLs.isEmpty else {
+                    self.errorMessage = "No files found in drop."
+                    return
+                }
                 await self.uploadFiles(collectedURLs, to: destination)
             }
+        }
+    }
+
+    private static func resolveDroppedFileURL(from provider: NSItemProvider, completion: @escaping (URL?) -> Void) {
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            if let url = Self.fileURL(from: item) {
+                completion(url)
+                return
+            }
+            Self.loadPromisedFile(from: provider, completion: completion)
+        }
+    }
+
+    private static func loadPromisedFile(from provider: NSItemProvider, completion: @escaping (URL?) -> Void) {
+        var candidateTypes = [UTType.fileURL.identifier]
+        for identifier in provider.registeredTypeIdentifiers where !candidateTypes.contains(identifier) {
+            candidateTypes.append(identifier)
+        }
+
+        func attempt(_ index: Int) {
+            guard index < candidateTypes.count else {
+                completion(nil)
+                return
+            }
+
+            let typeIdentifier = candidateTypes[index]
+            provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, _ in
+                guard let url,
+                      let stableURL = Self.copyPromisedDrop(url, typeIdentifier: typeIdentifier, suggestedName: provider.suggestedName) else {
+                    attempt(index + 1)
+                    return
+                }
+                completion(stableURL)
+            }
+        }
+
+        attempt(0)
+    }
+
+    private static func copyPromisedDrop(_ url: URL, typeIdentifier: String, suggestedName: String?) -> URL? {
+        let fileManager = FileManager.default
+        let dropDirectory = fileManager.temporaryDirectory.appendingPathComponent("ShareMasterDrops", isDirectory: true)
+        try? fileManager.createDirectory(at: dropDirectory, withIntermediateDirectories: true)
+
+        let sourceExtension = url.pathExtension
+        let typeExtension = UTType(typeIdentifier)?.preferredFilenameExtension ?? ""
+        let fallbackExtension = sourceExtension.isEmpty ? typeExtension : sourceExtension
+        var filename = suggestedName?.isEmpty == false ? suggestedName! : url.lastPathComponent
+        filename = (filename as NSString).lastPathComponent
+        if (filename as NSString).pathExtension.isEmpty && !fallbackExtension.isEmpty {
+            filename += ".\(fallbackExtension)"
+        }
+
+        let destination = dropDirectory.appendingPathComponent("\(UUID().uuidString)-\(filename)")
+        do {
+            try fileManager.copyItem(at: url, to: destination)
+            return destination
+        } catch {
+            return nil
+        }
+    }
+
+    private static func fileURL(from item: NSSecureCoding?) -> URL? {
+        switch item {
+        case let url as URL:
+            return url.isFileURL ? url : nil
+        case let url as NSURL:
+            let bridged = url as URL
+            return bridged.isFileURL ? bridged : nil
+        case let data as Data:
+            let url = URL(dataRepresentation: data, relativeTo: nil)
+            return url?.isFileURL == true ? url : nil
+        case let string as String:
+            let url = URL(string: string)
+            return url?.isFileURL == true ? url : nil
+        default:
+            return nil
         }
     }
 
@@ -458,6 +538,13 @@ struct ContentView: View {
 
             do {
                 let fileURL = uploadTasks[index].url
+                let didAccessFile = fileURL.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccessFile {
+                        fileURL.stopAccessingSecurityScopedResource()
+                    }
+                }
+
                 let result = try await S3Service.shared.upload(fileURL: fileURL, config: cfg) { progress in
                     Task { @MainActor in
                         if index < self.uploadTasks.count {

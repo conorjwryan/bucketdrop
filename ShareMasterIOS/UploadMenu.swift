@@ -4,9 +4,11 @@
 //
 //  Toolbar "+" menu for uploading from within the app: pick photos/videos
 //  from the library or any file from Files, then upload to a destination.
-//  When used inside the bucket browser the destination is fixed; from the
-//  root list a destination picker is shown first (same flow as the share
-//  extension). Links are copied to the clipboard on completion.
+//  Uploads are handed to UploadManager so they run in the background while
+//  the user keeps browsing — progress shows in the UploadStatusBar. When
+//  used inside the bucket browser the destination is fixed and the upload
+//  starts immediately; from the root list a destination picker sheet is
+//  shown first. Links are copied to the clipboard on completion.
 //
 
 import SwiftUI
@@ -53,7 +55,7 @@ struct UploadMenu: View {
                         urls.append(file.url)
                     }
                 }
-                if !urls.isEmpty { uploadRequest = UploadRequest(files: urls) }
+                handlePicked(urls)
             }
         }
         .fileImporter(
@@ -62,16 +64,25 @@ struct UploadMenu: View {
             allowsMultipleSelection: true
         ) { result in
             guard let urls = try? result.get() else { return }
-            let copied = urls.compactMap(Self.copyToTemp)
-            if !copied.isEmpty { uploadRequest = UploadRequest(files: copied) }
+            handlePicked(urls.compactMap(Self.copyToTemp))
         }
         .sheet(item: $uploadRequest) { request in
-            AppUploadView(
+            UploadDestinationPicker(
                 files: request.files,
-                fixedDestination: destination,
                 includeHidden: includeHidden,
                 onUploaded: onUploaded
             )
+        }
+    }
+
+    /// Fixed destination: start uploading right away (the status bar takes
+    /// over). Otherwise present the destination picker.
+    private func handlePicked(_ files: [URL]) {
+        guard !files.isEmpty else { return }
+        if let destination {
+            UploadManager.shared.start(files: files, destination: destination, onUploaded: onUploaded)
+        } else {
+            uploadRequest = UploadRequest(files: files)
         }
     }
 
@@ -114,142 +125,53 @@ private struct PickedFile: Transferable {
     }
 }
 
-/// The upload sheet: destination picker (when not fixed) → progress →
-/// links-copied confirmation. Mirrors the share extension's flow.
-struct AppUploadView: View {
+/// Destination picker sheet shown when the upload wasn't started from a
+/// specific bucket. Picking a destination hands the batch to UploadManager
+/// and dismisses — progress continues in the UploadStatusBar.
+struct UploadDestinationPicker: View {
     let files: [URL]
-    let fixedDestination: Destination?
     var includeHidden = false
     var onUploaded: () -> Void = {}
 
-    private enum Phase {
-        case pickingDestination
-        case uploading(destination: String)
-        case done(linkCount: Int)
-        case failed(String)
-    }
-
     @Environment(\.dismiss) private var dismiss
-    @State private var phase: Phase = .pickingDestination
-    @State private var progress: Double = 0
     private let config = ConfigStore.shared
 
     var body: some View {
         NavigationStack {
-            content
-                .navigationTitle("Upload")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    if case .pickingDestination = phase {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { dismiss() }
-                        }
-                    }
-                }
-        }
-        .interactiveDismissDisabled(isUploading)
-        .onAppear {
-            if let fixedDestination { upload(to: fixedDestination) }
-        }
-    }
-
-    private var isUploading: Bool {
-        if case .uploading = phase { return true }
-        return false
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch phase {
-        case .pickingDestination:
-            destinationPicker
-        case .uploading(let destination):
-            VStack(spacing: 16) {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .padding(.horizontal, 32)
-                Text("Uploading to \(destination)…")
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .done(let linkCount):
-            VStack(spacing: 12) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.green)
-                Text(linkCount == 1 ? "Link copied" : "\(linkCount) links copied")
-                    .font(.headline)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .failed(let message):
-            ContentUnavailableView {
-                Label("Upload Failed", systemImage: "exclamationmark.icloud")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Close") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-    }
-
-    private var destinationPicker: some View {
-        List {
-            Section(files.count == 1 ? "Upload 1 file to" : "Upload \(files.count) files to") {
-                ForEach(config.sortedDestinations.filter { includeHidden || !$0.isHidden }) { destination in
-                    Button {
-                        upload(to: destination)
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "externaldrive.badge.icloud")
-                                .foregroundStyle(.tint)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(destination.name.isEmpty ? destination.bucket : destination.name)
-                                    .foregroundStyle(.primary)
-                                Text(destination.bucket)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if destination.id == config.lastSelectedDestinationID {
-                                Text("Last used")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+            List {
+                Section(files.count == 1 ? "Upload 1 file to" : "Upload \(files.count) files to") {
+                    ForEach(config.sortedDestinations.filter { includeHidden || !$0.isHidden }) { destination in
+                        Button {
+                            UploadManager.shared.start(files: files, destination: destination, onUploaded: onUploaded)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "externaldrive.badge.icloud")
+                                    .foregroundStyle(.tint)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(destination.name.isEmpty ? destination.bucket : destination.name)
+                                        .foregroundStyle(.primary)
+                                    Text(destination.bucket)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if destination.id == config.lastSelectedDestinationID {
+                                    Text("Last used")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-    }
-
-    private func upload(to destination: Destination) {
-        guard let s3Config = config.s3Config(for: destination) else {
-            phase = .failed("This destination's account is missing its credentials.")
-            return
-        }
-        config.lastSelectedDestinationID = destination.id
-        phase = .uploading(destination: destination.name.isEmpty ? destination.bucket : destination.name)
-
-        Task {
-            do {
-                var links: [String] = []
-                for (index, file) in files.enumerated() {
-                    let result = try await S3Service.shared.upload(fileURL: file, config: s3Config) { fileProgress in
-                        Task { @MainActor in
-                            progress = (Double(index) + fileProgress) / Double(files.count)
-                        }
-                    }
-                    links.append(result.url)
+            .navigationTitle("Upload")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
                 }
-
-                UIPasteboard.general.string = links.joined(separator: "\n")
-                phase = .done(linkCount: links.count)
-                onUploaded()
-                try? await Task.sleep(for: .seconds(1.2))
-                dismiss()
-            } catch {
-                phase = .failed(error.localizedDescription)
             }
         }
     }

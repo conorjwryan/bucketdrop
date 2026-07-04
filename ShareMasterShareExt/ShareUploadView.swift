@@ -68,8 +68,12 @@ struct ShareUploadView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 56))
                     .foregroundStyle(.green)
-                Text(linkCount == 1 ? "Link copied" : "\(linkCount) links copied")
+                Text(linkCount == 1
+                     ? "File uploaded and link copied to clipboard"
+                     : "\(linkCount) files uploaded and links copied to clipboard")
                     .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):

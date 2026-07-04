@@ -60,6 +60,9 @@ struct DestinationListView: View {
             .sheet(isPresented: $showSettings) {
                 IOSSettingsView()
             }
+            .safeAreaInset(edge: .bottom) {
+                UploadStatusBar()
+            }
             .onChange(of: scenePhase) { _, phase in
                 // Pick up config synced from the Mac via iCloud Keychain.
                 if phase == .active {

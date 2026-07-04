@@ -51,7 +51,10 @@ struct DestinationListView: View {
                         }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    // Greyed out while every destination is concealed so the
+                    // decoy empty state doesn't offer an upload picker.
                     UploadMenu(includeHidden: showHidden)
+                        .disabled(visibleDestinations.isEmpty)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -64,35 +67,6 @@ struct DestinationListView: View {
             .sheet(isPresented: $showSettings) {
                 IOSSettingsView()
             }
-            .safeAreaInset(edge: .bottom) {
-                UploadStatusBar()
-            }
-            // Mobile-data gate: uploads attempted on cellular land in one of
-            // these two alerts (see UploadManager.start).
-            .alert(
-                "Uploading on Mobile Data Is Disabled",
-                isPresented: Binding(
-                    get: { uploads.showCellularDisabledAlert },
-                    set: { uploads.showCellularDisabledAlert = $0 }
-                )
-            ) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("To upload over mobile data, turn on \"Upload on Mobile Data\" in Settings.")
-            }
-            .alert(
-                "You're on Mobile Data",
-                isPresented: Binding(
-                    get: { uploads.cellularPrompt != nil },
-                    set: { if !$0 { uploads.cancelCellularUpload() } }
-                ),
-                presenting: uploads.cellularPrompt
-            ) { _ in
-                Button("Continue") { uploads.confirmCellularUpload() }
-                Button("Cancel", role: .cancel) { uploads.cancelCellularUpload() }
-            } message: { prompt in
-                Text(prompt.message)
-            }
             .onChange(of: scenePhase) { _, phase in
                 // Pick up config synced from the Mac via iCloud Keychain.
                 if phase == .active {
@@ -103,6 +77,38 @@ struct DestinationListView: View {
                     showHidden = false
                 }
             }
+        }
+        // Status bar and mobile-data alerts sit on the NavigationStack, not
+        // the root list: uploads also start from pushed bucket browsers, and
+        // presentations from a covered root view don't reliably appear.
+        .safeAreaInset(edge: .bottom) {
+            UploadStatusBar()
+        }
+        // Mobile-data gate: uploads attempted on cellular land in one of
+        // these two alerts (see UploadManager.start).
+        .alert(
+            "Uploading on Mobile Data Is Disabled",
+            isPresented: Binding(
+                get: { uploads.showCellularDisabledAlert },
+                set: { uploads.showCellularDisabledAlert = $0 }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("To upload over mobile data, turn on \"Upload on Mobile Data\" in Settings.")
+        }
+        .alert(
+            "You're on Mobile Data",
+            isPresented: Binding(
+                get: { uploads.cellularPrompt != nil },
+                set: { if !$0 { uploads.cancelCellularUpload() } }
+            ),
+            presenting: uploads.cellularPrompt
+        ) { _ in
+            Button("Continue") { uploads.confirmCellularUpload() }
+            Button("Cancel", role: .cancel) { uploads.cancelCellularUpload() }
+        } message: { prompt in
+            Text(prompt.message)
         }
     }
 

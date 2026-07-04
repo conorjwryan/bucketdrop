@@ -25,9 +25,13 @@ The iOS app has the same features as the MacOS app, where opening the app allows
 
 ## Note on Installation
 
-I do not have an Apple Developer Subscription, as such to run either the MacOS or iOS apps you're going to have to download and compile this yourself.
+I don't have the money right now to spare for an Apple Developer Subscription :( 
 
-This will hopefully change in the future but yeah but you'll probably get a bunch of notisation / security errors as a result.
+This means for you to run either the MacOS or iOS apps you're going to have to download and compile this yourself.
+
+You'll probably get a bunch of notisation / security errors as a result.
+
+I'd love to be able to release this and move towards development full time so if you like what I've done here ([or any of my other projects](https://cjwr.dev/projects)) please consider [sponsoring me on Ko-Fi](https://ko-fi.com/conorjwryan).
 
 ## Setup
 

@@ -77,6 +77,17 @@ struct DestinationListView: View {
                     config.revealHidden = false
                 }
             }
+            .task(id: scenePhase) {
+                // The keychain posts no change notifications, so poll the
+                // cloud payload while foregrounded to pick up edits made on
+                // other devices without a background/foreground cycle. Cheap:
+                // one keychain read; adoptCloudIfNewer bails on same version.
+                guard scenePhase == .active else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(5))
+                    config.refreshFromCloud()
+                }
+            }
         }
         // Status bar and mobile-data alerts sit on the NavigationStack, not
         // the root list: uploads also start from pushed bucket browsers, and

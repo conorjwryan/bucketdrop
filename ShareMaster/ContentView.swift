@@ -98,6 +98,16 @@ struct ContentView: View {
             }
             if config.recentsExpanded { await loadRecent() }
         }
+        .task {
+            // The keychain posts no change notifications, so poll the cloud
+            // payload while the popover is open to pick up edits made on
+            // other devices. Cancelled when the popover closes. Cheap: one
+            // keychain read; adoptCloudIfNewer bails on same version.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                config.refreshFromCloud()
+            }
+        }
         .onChange(of: config.recentsExpanded) { _, expanded in
             if expanded { Task { await loadRecent() } }
         }

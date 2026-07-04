@@ -43,6 +43,17 @@ struct SettingsView: View {
         .onChange(of: config.pendingDuplicate) { _, pending in
             if pending != nil { selection = .destinations }
         }
+        .task {
+            // The Settings window can stay open indefinitely, and the
+            // keychain posts no change notifications — refresh on open, then
+            // poll so accounts/destinations edited on other devices appear
+            // while the window is up. Cancelled when it closes.
+            config.refreshFromCloud()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                config.refreshFromCloud()
+            }
+        }
     }
 }
 

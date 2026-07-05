@@ -11,6 +11,7 @@
 import SwiftUI
 import ImageIO
 import QuickLook
+import AVKit
 
 struct BucketBrowserView: View {
     let destination: Destination
@@ -581,9 +582,18 @@ struct ObjectDetailView: View {
     @State private var showQuickLook = false
     @State private var exportItem: ExportItem?
     @State private var confirmDelete = false
+    /// Player for downloaded videos; created when the preview appears.
+    @State private var player: AVPlayer?
 
     private var isImage: Bool {
         ["png", "jpg", "jpeg", "gif", "webp", "heic"]
+            .contains((object.key as NSString).pathExtension.lowercased())
+    }
+
+    /// Formats AVPlayer handles natively; webm deliberately excluded — it
+    /// falls through to the QuickLook path instead.
+    private var isVideo: Bool {
+        ["mp4", "mov", "m4v"]
             .contains((object.key as NSString).pathExtension.lowercased())
     }
 
@@ -603,6 +613,20 @@ struct ObjectDetailView: View {
                         url: link.flatMap(URL.init(string:)),
                         localURL: localURL
                     )
+                } else if isVideo, let localURL {
+                    // Downloaded video: play in place with the standard iOS
+                    // player controls (fullscreen, AirPlay, scrubbing).
+                    VideoPlayer(player: player)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 320)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .task(id: localURL) {
+                            player = AVPlayer(url: localURL)
+                        }
+                        .onDisappear {
+                            player?.pause()
+                        }
                 } else if let localURL {
                     // Downloaded non-image: tap to view offline in QuickLook.
                     Button {

@@ -45,8 +45,8 @@ final class DownloadStore {
     /// Bumped on every mutation so SwiftUI rows re-evaluate their badges.
     private(set) var revision = 0
 
-    private static let folderName = "ShareMaster Downloads"
-    private static let manifestName = "downloads.json"
+    private nonisolated static let folderName = "ShareMaster Downloads"
+    private nonisolated static let manifestName = "downloads.json"
 
     private init() {
         loadManifest()

@@ -224,6 +224,7 @@ final class ConfigStore {
         static let fullImagePreviews = "config_full_image_previews"
         static let tapForCellularPreviews = "config_tap_for_cellular_previews"
         static let iCloudSync = "config_icloud_sync_enabled"
+        static let downloadsInFilesApp = "config_downloads_in_files_app"
     }
 
     private(set) var accounts: [Account] = [] {
@@ -294,6 +295,15 @@ final class ConfigStore {
         didSet { defaults.set(requiresTapForCellularPreviews, forKey: Keys.tapForCellularPreviews) }
     }
 
+    /// iOS-only: where downloaded objects are stored. On (default) keeps
+    /// them under Documents/, browsable in the Files app ("On My iPhone →
+    /// ShareMaster"); off moves them to Application Support, reachable only
+    /// inside the app (and via Export). DownloadStore observes changes and
+    /// migrates existing files between the two roots.
+    var showsDownloadsInFilesApp: Bool = true {
+        didSet { defaults.set(showsDownloadsInFilesApp, forKey: Keys.downloadsInFilesApp) }
+    }
+
     /// Whether this device participates in config sync over iCloud Keychain.
     /// Off = stop pushing and adopting the shared payload (existing cloud
     /// data is left in place for other devices). Re-enabling adopts a newer
@@ -337,6 +347,9 @@ final class ConfigStore {
         }
         if defaults.object(forKey: Keys.tapForCellularPreviews) != nil {
             requiresTapForCellularPreviews = defaults.bool(forKey: Keys.tapForCellularPreviews)
+        }
+        if defaults.object(forKey: Keys.downloadsInFilesApp) != nil {
+            showsDownloadsInFilesApp = defaults.bool(forKey: Keys.downloadsInFilesApp)
         }
         suppressCellularWarnings = defaults.bool(forKey: Keys.suppressCellularWarnings)
         migrateLegacyConfigIfNeeded()

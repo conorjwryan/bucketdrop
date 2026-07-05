@@ -12,6 +12,7 @@ struct DestinationListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var config = ConfigStore.shared
     @State private var uploads = UploadManager.shared
+    @State private var downloads = DownloadManager.shared
     @State private var showSettings = false
 
     private var visibleDestinations: [Destination] {
@@ -93,7 +94,10 @@ struct DestinationListView: View {
         // the root list: uploads also start from pushed bucket browsers, and
         // presentations from a covered root view don't reliably appear.
         .safeAreaInset(edge: .bottom) {
-            UploadStatusBar()
+            VStack(spacing: 0) {
+                DownloadStatusBar()
+                UploadStatusBar()
+            }
         }
         // Mobile-data gate: uploads attempted on cellular land in one of
         // these two alerts (see UploadManager.start).
@@ -118,6 +122,31 @@ struct DestinationListView: View {
         ) { _ in
             Button("Continue") { uploads.confirmCellularUpload() }
             Button("Cancel", role: .cancel) { uploads.cancelCellularUpload() }
+        } message: { prompt in
+            Text(prompt.message)
+        }
+        // Downloads share the same gate settings (see DownloadManager.start).
+        .alert(
+            "Downloading on Mobile Data Is Disabled",
+            isPresented: Binding(
+                get: { downloads.showCellularDisabledAlert },
+                set: { downloads.showCellularDisabledAlert = $0 }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("To download over mobile data, turn on \"Transfer on Mobile Data\" in Settings.")
+        }
+        .alert(
+            "You're on Mobile Data",
+            isPresented: Binding(
+                get: { downloads.cellularPrompt != nil },
+                set: { if !$0 { downloads.cancelCellularDownload() } }
+            ),
+            presenting: downloads.cellularPrompt
+        ) { _ in
+            Button("Continue") { downloads.confirmCellularDownload() }
+            Button("Cancel", role: .cancel) { downloads.cancelCellularDownload() }
         } message: { prompt in
             Text(prompt.message)
         }

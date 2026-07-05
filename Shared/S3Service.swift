@@ -1134,7 +1134,10 @@ actor S3Service {
                 lastModified = parseLastModified(dateString)
             }
 
-            objects.append(S3Object(key: key, size: size, lastModified: lastModified ?? Date()))
+            objects.append(S3Object(
+                key: key, size: size, lastModified: lastModified ?? Date(),
+                etag: Self.parseETag(content)
+            ))
         }
 
         return objects.sorted { $0.lastModified > $1.lastModified }
@@ -1177,7 +1180,10 @@ actor S3Service {
                 lastModified = parseLastModified(String(content[dateStart.upperBound..<dateEnd.lowerBound]))
             }
 
-            objects.append(S3Object(key: key, size: size, lastModified: lastModified ?? Date()))
+            objects.append(S3Object(
+                key: key, size: size, lastModified: lastModified ?? Date(),
+                etag: Self.parseETag(content)
+            ))
         }
 
         // NextContinuationToken is only present when the listing is truncated.
@@ -1189,6 +1195,17 @@ actor S3Service {
 
         // Keep S3's lexicographic order — pagination depends on it staying stable.
         return S3DirectoryPage(folders: folders, objects: objects, nextContinuationToken: nextToken)
+    }
+
+    /// ETag from one <Contents> chunk. The value arrives XML-escaped
+    /// (`&quot;md5&quot;`); both the escapes and the quotes are stripped.
+    private static func parseETag(_ content: String) -> String? {
+        guard let start = content.range(of: "<ETag>"),
+              let end = content.range(of: "</ETag>") else { return nil }
+        let raw = String(content[start.upperBound..<end.lowerBound])
+            .replacingOccurrences(of: "&quot;", with: "")
+            .replacingOccurrences(of: "\"", with: "")
+        return raw.isEmpty ? nil : raw
     }
 
     private func parseLastModified(_ value: String) -> Date? {
@@ -1328,6 +1345,9 @@ struct S3Object: Identifiable {
     let key: String
     let size: Int64
     let lastModified: Date
+    /// Entity tag from the listing (quotes stripped), used to detect remote
+    /// changes against downloaded copies. nil when the provider omits it.
+    var etag: String? = nil
 
     var filename: String {
         // Display name: drop the path prefix, then strip an 8-char UUID prefix if present.

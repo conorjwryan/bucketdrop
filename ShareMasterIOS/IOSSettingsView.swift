@@ -26,14 +26,14 @@ struct IOSSettingsView: View {
         NavigationStack {
             List {
                 Section {
-                    Toggle("Upload on Mobile Data", isOn: $config.allowsCellularUploads)
+                    Toggle("Transfer on Mobile Data", isOn: $config.allowsCellularUploads)
                     Toggle("Skip Mobile Data Warnings", isOn: $config.suppressCellularWarnings)
                         .disabled(!config.allowsCellularUploads)
                     Toggle("iCloud Sync", isOn: $config.iCloudSyncEnabled)
                 } header: {
                     Text("Sync")
                 } footer: {
-                    Text("With Mobile Data off, files upload only over Wi-Fi — browsing, previews, and copying links work anywhere. With it on, you'll see how much data an upload will use before it starts, unless warnings are skipped. iCloud Sync shares your accounts and destinations between devices through iCloud Keychain.")
+                    Text("With Mobile Data off, files upload and download only over Wi-Fi — browsing, previews, and copying links work anywhere. With it on, you'll see how much data a transfer will use before it starts, unless warnings are skipped. iCloud Sync shares your accounts and destinations between devices through iCloud Keychain.")
                 }
 
                 Section {
@@ -44,6 +44,8 @@ struct IOSSettingsView: View {
                 } footer: {
                     Text("Full-size previews decode the original image instead of a smaller display copy. On mobile data, tap-to-preview stops images from downloading until you choose to load them.")
                 }
+
+                DownloadsSettingsSection()
 
                 // Both sections filter through the wordmark reveal: with it
                 // off, hidden destinations and their dedicated accounts are
@@ -403,5 +405,54 @@ struct DestinationEditorView: View {
         }
         ConfigStore.shared.upsertDestination(draft)
         dismiss()
+    }
+}
+
+/// Downloads controls: where local copies live (Files-app-visible or
+/// private) and a way to reclaim the space they use.
+struct DownloadsSettingsSection: View {
+    @State private var config = ConfigStore.shared
+    @State private var store = DownloadStore.shared
+    @State private var confirmRemoveAll = false
+
+    var body: some View {
+        @Bindable var config = config
+        Section {
+            Toggle("Show Downloads in Files App", isOn: Binding(
+                get: { config.showsDownloadsInFilesApp },
+                set: {
+                    config.showsDownloadsInFilesApp = $0
+                    store.applyRootChange()
+                }
+            ))
+            if !store.isEmpty {
+                Button("Remove All Downloads", role: .destructive) {
+                    confirmRemoveAll = true
+                }
+            }
+        } header: {
+            Text("Downloads")
+        } footer: {
+            Text(footerText)
+        }
+        .confirmationDialog(
+            "Remove All Downloads?",
+            isPresented: $confirmRemoveAll,
+            titleVisibility: .visible
+        ) {
+            Button("Remove All", role: .destructive) {
+                store.removeAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removes every downloaded copy from this device. Nothing is deleted from your buckets.")
+        }
+    }
+
+    private var footerText: String {
+        let visibility = "With Files App visibility on, downloads appear under On My iPhone → ShareMaster; off keeps them private to this app (Export still works)."
+        guard !store.isEmpty else { return visibility }
+        let size = ByteCountFormatter.string(fromByteCount: store.totalSize, countStyle: .file)
+        return "Downloads are using \(size) on this device. " + visibility
     }
 }

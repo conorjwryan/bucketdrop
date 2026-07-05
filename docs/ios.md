@@ -14,6 +14,7 @@ On iOS, `ConfigStore` reads/writes the App Group `group.com.cjwr.ShareMaster` fo
 - `IOSSettingsView` — account/destination editors (with Duplicate), account transfer defaults, per-destination transfer overrides and default browser sort, Sync section, cellular and preview toggles.
 - `UploadMenu` — the toolbar "+": Photo Library (PhotosPicker/`Transferable`, copied to a temp file) and Files (`fileImporter`, security-scoped temp copy). Inside a bucket browser it also offers **New Folder** (hidden when the menu has no fixed destination, i.e. on the root list): a name prompt → `S3Service.createFolder` under the currently open prefix → `onUploaded()` refreshes the listing. See [Transfer engine](transfer-engine.md#creating-folders) for the placeholder-object mechanism and the R2 quirk it works around.
 - `UploadManager` — see next section.
+- `DownloadStore` / `DownloadManager` — offline copies of bucket objects; see [Downloads & offline files](#downloads--offline-files).
 
 ## Bucket browser: folders, sorting, paging, permissions
 
@@ -28,7 +29,9 @@ Navigation is prefix-based: the view takes an optional `prefix` (nil = the desti
 
 Listing failures that are permission problems (`S3Error.isPermissionIssue`) get a dedicated full-screen state — yellow warning triangle, "Permission Denied", guidance to check the account's credentials and `s3:ListBucket` policy plus the actual S3 message — instead of the generic "Couldn't Load" view. This matters for up-navigation: credentials scoped to the destination's prefix will AccessDenied at the bucket root.
 
-The toolbar "+" uploads **into the folder currently open**: the browser passes its listing prefix through `UploadMenu` → `UploadManager` → `S3Service.upload(keyPrefix:)`, and the status bar names the actual target (destination name when it matches the configured prefix, `bucket/folder` otherwise). Object actions (copy link, preview, delete) work on full keys, so they work on files found outside the destination's prefix too.
+The toolbar "+" uploads **into the folder currently open**: the browser passes its listing prefix through `UploadMenu` → `UploadManager` → `S3Service.upload(keyPrefix:)`, and the status bar names the actual target (destination name when it matches the configured prefix, `bucket/folder` otherwise). Object actions (copy link, preview, download, export, delete) work on full keys, so they work on files found outside the destination's prefix too.
+
+**Deleting asks first** — swipe, context menu, and the detail sheet all funnel into a `confirmationDialog` naming the file and the bucket; when a downloaded copy exists the message says it's removed too (both the remote object and the local copy go together).
 
 ### The "…" menu: sorting and destinations from folders
 
@@ -46,15 +49,26 @@ Next to the "+" there's a context-aware "…" menu, present at every browser lev
 
 **Presentation rule (bug happened twice):** the status bar and every upload alert must hang off the **NavigationStack itself**, not the root list view — presentations from a covered root don't reliably appear while a bucket view is pushed.
 
+## Downloads & offline files
+
+The bucket browser can keep **local copies** of objects for offline viewing — full quality, airplane-mode-safe. Two pieces, both in `ShareMasterIOS/`:
+
+- **`DownloadStore`** (`@MainActor @Observable` singleton) owns the files and a manifest (`downloads.json` in Application Support) keyed by `accountId|bucket|key`, so the same object browsed via two destinations shares one download. Each entry records the object's **size, lastModified and ETag at download time** (`S3Object.etag` is parsed from the listing XML); `state(for:)` compares those against the live listing, so a remotely replaced file reads as **`.outdated`** rather than silently serving stale bytes. Row badges: green circle/white tick = downloaded and current; orange circular-arrows = remote changed, context menu offers **Update Download**. Updating is always explicit — nothing re-downloads by itself.
+- **`DownloadManager`** mirrors `UploadManager`: queued jobs run one at a time via `S3Service.download` (ranged/rate-limited), a `DownloadStatusBar` stacks with the upload bar in the root `safeAreaInset`, a UIKit background task covers the post-backgrounding grace period, and the same mobile-data gate applies (see below).
+
+**Storage roots** — the device-local setting `showsDownloadsInFilesApp` (default on) decides where files live: `Documents/ShareMaster Downloads/<bucket>/<key>` (browsable in the Files app under **On My iPhone → ShareMaster**; the iOS target sets `UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`) or the same layout under Application Support (private). Toggling in Settings calls `DownloadStore.applyRootChange()`, which moves the whole folder between roots; the manifest's relative paths are anchored to whichever root is current, so nothing else changes.
+
+**Viewing & export** — the object detail sheet prefers the local copy: images render from disk at full quality (skipping both the cellular tap-gate and the bounded decode), other types open in QuickLook (`.quickLookPreview`). **Export…** (context menu + detail sheet) runs `UIDocumentPickerViewController(forExporting:asCopy:true)`, copying the file anywhere the Files app reaches — iCloud Drive, other providers, On My iPhone. **Share File** shares the actual bytes instead of the link once a copy exists. Deleting the remote object removes the local copy too (the confirmation says so); **Remove Download** removes only the local copy. Settings shows total space used and a **Remove All Downloads** action.
+
 ## Mobile-data gating
 
-iOS-app-only, uploads-only for transfer blocking (browsing and link-copying are never gated; the app has no file-download feature yet). Controlled by the device-local settings `allowsCellularUploads` (default on) and `suppressCellularWarnings` (default off). Image previews have their own device-local controls: `rendersFullImagePreviews` (default off, decode a bounded display copy) and `requiresTapForCellularPreviews` (default on, show a Preview button before fetching image bytes on mobile data).
+iOS-app-only, transfers-only for blocking (browsing and link-copying are never gated). Controlled by the device-local settings `allowsCellularUploads` (default on; labelled **Transfer on Mobile Data** in Settings — it now gates downloads too, same stored key) and `suppressCellularWarnings` (default off). Image previews have their own device-local controls: `rendersFullImagePreviews` (default off, decode a bounded display copy) and `requiresTapForCellularPreviews` (default on, show a Preview button before fetching image bytes on mobile data).
 
 - `NetworkMonitor` (an `@Observable` `NWPathMonitor` wrapper in `UploadManager.swift`) **must be warmed at launch** — it's touched in `UploadManager.init` because the first path reading is asynchronous, so a lazily created monitor always reports "not cellular".
-- On cellular, `UploadManager.start` either shows an "Uploading on Mobile Data Is Disabled" alert (toggle off) or a "~X MB of your mobile data plan" Continue/Cancel prompt (toggle on, warnings not suppressed).
-- Enforcement backstop: `S3Config.allowsCellular` → `allowsCellularAccess` on the upload requests; a resulting `URLError` (`.dataNotAllowed` etc.) while gated is mapped to the friendly disabled alert in `UploadManager.run()`.
+- On cellular, `UploadManager.start` and `DownloadManager.start` either show a "… on Mobile Data Is Disabled" alert (toggle off) or a "~X MB of your mobile data plan" Continue/Cancel prompt (toggle on, warnings not suppressed).
+- Enforcement backstop: `S3Config.allowsCellular` → `allowsCellularAccess` on the transfer requests; a resulting `URLError` (`.dataNotAllowed` etc.) while gated is mapped to the friendly disabled alert in both managers' `run()`.
 - The share extension has **no gate UI** — when uploads are disallowed on cellular it simply fails at the network level.
-- On cellular, `RemoteImagePreview` waits for an explicit tap before it downloads the image unless `requiresTapForCellularPreviews` is off. Wi-Fi previews still load automatically. The full-size preview toggle only changes decode size, not object download size.
+- On cellular, `RemoteImagePreview` waits for an explicit tap before it downloads the image unless `requiresTapForCellularPreviews` is off (downloaded copies render straight from disk, no gate). Wi-Fi previews still load automatically. The full-size preview toggle only changes decode size, not object download size.
 
 ## Hidden destinations ("decoy mode")
 

@@ -10,6 +10,7 @@
 
 import SwiftUI
 import ImageIO
+import QuickLook
 
 struct BucketBrowserView: View {
     let destination: Destination
@@ -35,6 +36,12 @@ struct BucketBrowserView: View {
     @State private var isPermissionError = false
     @State private var selectedObject: S3Object?
     @State private var copiedKey: String?
+    @State private var downloadStore = DownloadStore.shared
+    @State private var downloads = DownloadManager.shared
+    /// Object awaiting delete confirmation (swipe or context menu).
+    @State private var pendingDelete: S3Object?
+    /// Downloaded file being exported via the Files document picker.
+    @State private var exportItem: ExportItem?
     @State private var showNewDestinationPrompt = false
     @State private var newDestinationName = ""
     @State private var didSaveDestination = false
@@ -201,6 +208,37 @@ struct BucketBrowserView: View {
                 objects.removeAll { $0.key == object.key }
             }
         }
+        .sheet(item: $exportItem) { item in
+            DocumentExporter(url: item.url)
+        }
+        .confirmationDialog(
+            deleteTitle,
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { object in
+            Button("Delete", role: .destructive) {
+                pendingDelete = nil
+                Task { await delete(object) }
+            }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: { object in
+            Text(deleteMessage(for: object))
+        }
+    }
+
+    private var deleteTitle: String {
+        pendingDelete.map { "Delete \u{201C}\($0.filename)\u{201D}?" } ?? "Delete?"
+    }
+
+    private func deleteMessage(for object: S3Object) -> String {
+        let base = "This permanently deletes the file from \(destination.bucket)."
+        return downloadStore.state(for: object, destination: destination) == .notDownloaded
+            ? base
+            : base + " Its downloaded copy on this device is removed too."
     }
 
     private var objectList: some View {
@@ -234,15 +272,21 @@ struct BucketBrowserView: View {
             }
 
             ForEach(objects) { object in
+                let state = downloadStore.state(for: object, destination: destination)
                 Button {
                     selectedObject = object
                 } label: {
-                    ObjectRow(object: object, copied: copiedKey == object.key)
+                    ObjectRow(
+                        object: object,
+                        copied: copiedKey == object.key,
+                        downloadState: state,
+                        isDownloading: downloads.isActive(object)
+                    )
                 }
                 .foregroundStyle(.primary)
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     Button(role: .destructive) {
-                        Task { await delete(object) }
+                        pendingDelete = object
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
@@ -261,8 +305,39 @@ struct BucketBrowserView: View {
                     } label: {
                         Label("Copy Link", systemImage: "link")
                     }
+                    switch state {
+                    case .notDownloaded:
+                        Button {
+                            downloads.start(object: object, destination: destination)
+                        } label: {
+                            Label("Download", systemImage: "arrow.down.circle")
+                        }
+                        .disabled(downloads.isActive(object))
+                    case .outdated:
+                        Button {
+                            downloads.start(object: object, destination: destination)
+                        } label: {
+                            Label("Update Download", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(downloads.isActive(object))
+                    case .downloaded:
+                        EmptyView()
+                    }
+                    if state != .notDownloaded,
+                       let local = downloadStore.localURL(for: object, destination: destination) {
+                        Button {
+                            exportItem = ExportItem(url: local)
+                        } label: {
+                            Label("Export…", systemImage: "square.and.arrow.up.on.square")
+                        }
+                        Button(role: .destructive) {
+                            downloadStore.remove(for: object, destination: destination)
+                        } label: {
+                            Label("Remove Download", systemImage: "arrow.down.circle.dotted")
+                        }
+                    }
                     Button(role: .destructive) {
-                        Task { await delete(object) }
+                        pendingDelete = object
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
@@ -409,6 +484,7 @@ struct BucketBrowserView: View {
         guard let config else { return }
         do {
             try await S3Service.shared.deleteObject(key: object.key, config: config)
+            DownloadStore.shared.remove(for: object, destination: destination)
             objects.removeAll { $0.key == object.key }
         } catch {
             errorMessage = error.localizedDescription
@@ -435,6 +511,8 @@ struct FolderRow: View {
 struct ObjectRow: View {
     let object: S3Object
     let copied: Bool
+    var downloadState: DownloadState = .notDownloaded
+    var isDownloading: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -454,6 +532,22 @@ struct ObjectRow: View {
                 Label("Copied", systemImage: "checkmark.circle.fill")
                     .labelStyle(.iconOnly)
                     .foregroundStyle(.green)
+            } else if isDownloading {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                switch downloadState {
+                case .downloaded:
+                    // White tick in a green bubble: available offline.
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.white, .green)
+                case .outdated:
+                    // The remote file changed since it was downloaded.
+                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                        .foregroundStyle(.white, .orange)
+                case .notDownloaded:
+                    EmptyView()
+                }
             }
         }
         .padding(.vertical, 2)
@@ -472,27 +566,66 @@ struct ObjectRow: View {
 }
 
 /// Preview sheet: shows the image (when the object is one) and offers
-/// copy link / share / delete.
+/// copy link / share / download / export / delete. Downloaded objects
+/// preview from the local file (full quality, works offline) and open in
+/// QuickLook for non-image types.
 struct ObjectDetailView: View {
     let object: S3Object
     let destination: Destination
     let onDelete: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var downloadStore = DownloadStore.shared
+    @State private var downloads = DownloadManager.shared
     @State private var link: String?
     @State private var copied = false
     @State private var errorMessage: String?
+    @State private var showQuickLook = false
+    @State private var exportItem: ExportItem?
+    @State private var confirmDelete = false
 
     private var isImage: Bool {
         ["png", "jpg", "jpeg", "gif", "webp", "heic"]
             .contains((object.key as NSString).pathExtension.lowercased())
     }
 
+    private var downloadState: DownloadState {
+        downloadStore.state(for: object, destination: destination)
+    }
+
+    private var localURL: URL? {
+        downloadStore.localURL(for: object, destination: destination)
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
-                if isImage, let link, let url = URL(string: link) {
-                    RemoteImagePreview(url: url)
+                if isImage, localURL != nil || link != nil {
+                    RemoteImagePreview(
+                        url: link.flatMap(URL.init(string:)),
+                        localURL: localURL
+                    )
+                } else if let localURL {
+                    // Downloaded non-image: tap to view offline in QuickLook.
+                    Button {
+                        showQuickLook = true
+                    } label: {
+                        VStack(spacing: 10) {
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 56))
+                                .foregroundStyle(.secondary)
+                            Label("View File", systemImage: "eye")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .padding(.top, 24)
+                    }
+                    .buttonStyle(.plain)
+                    .quickLookPreview(
+                        Binding(
+                            get: { showQuickLook ? localURL : nil },
+                            set: { showQuickLook = $0 != nil }
+                        )
+                    )
                 } else {
                     Image(systemName: "doc")
                         .font(.system(size: 56))
@@ -507,6 +640,18 @@ struct ObjectDetailView: View {
                     Text("\(object.size.formattedFileSize) · \(object.lastModified.formatted(date: .abbreviated, time: .shortened))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if downloadState != .notDownloaded {
+                        Label(
+                            downloadState == .downloaded
+                                ? "Available offline"
+                                : "Downloaded copy is out of date",
+                            systemImage: downloadState == .downloaded
+                                ? "checkmark.circle.fill"
+                                : "arrow.triangle.2.circlepath.circle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(downloadState == .downloaded ? .green : .orange)
+                    }
                 }
 
                 if let errorMessage {
@@ -529,7 +674,15 @@ struct ObjectDetailView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(link == nil)
 
-                    if let link, let url = URL(string: link) {
+                    // Share the actual file when a local copy exists,
+                    // otherwise the link.
+                    if let localURL {
+                        ShareLink(item: localURL) {
+                            Label("Share File", systemImage: "square.and.arrow.up")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    } else if let link, let url = URL(string: link) {
                         ShareLink(item: url) {
                             Label("Share", systemImage: "square.and.arrow.up")
                                 .frame(maxWidth: .infinity)
@@ -537,8 +690,46 @@ struct ObjectDetailView: View {
                         .buttonStyle(.bordered)
                     }
 
+                    if downloads.isActive(object) {
+                        Label("Downloading…", systemImage: "arrow.down.circle")
+                            .frame(maxWidth: .infinity)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 6)
+                    } else if downloadState != .downloaded {
+                        Button {
+                            downloads.start(object: object, destination: destination)
+                        } label: {
+                            Label(
+                                downloadState == .outdated ? "Update Download" : "Download",
+                                systemImage: downloadState == .outdated
+                                    ? "arrow.triangle.2.circlepath"
+                                    : "arrow.down.circle"
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if let localURL {
+                        Button {
+                            exportItem = ExportItem(url: localURL)
+                        } label: {
+                            Label("Export…", systemImage: "square.and.arrow.up.on.square")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(role: .destructive) {
+                            downloadStore.remove(for: object, destination: destination)
+                        } label: {
+                            Label("Remove Download", systemImage: "arrow.down.circle.dotted")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
                     Button(role: .destructive) {
-                        Task { await deleteObject() }
+                        confirmDelete = true
                     } label: {
                         Label("Delete", systemImage: "trash")
                             .frame(maxWidth: .infinity)
@@ -556,6 +747,23 @@ struct ObjectDetailView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .sheet(item: $exportItem) { item in
+                DocumentExporter(url: item.url)
+            }
+            .confirmationDialog(
+                "Delete \u{201C}\(object.filename)\u{201D}?",
+                isPresented: $confirmDelete,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    Task { await deleteObject() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(downloadState == .notDownloaded
+                    ? "This permanently deletes the file from \(destination.bucket)."
+                    : "This permanently deletes the file from \(destination.bucket). Its downloaded copy on this device is removed too.")
+            }
             .task {
                 guard let config = ConfigStore.shared.s3Config(for: destination) else { return }
                 link = try? await S3Service.shared.shareLink(for: object.key, config: config)
@@ -567,6 +775,7 @@ struct ObjectDetailView: View {
         guard let config = ConfigStore.shared.s3Config(for: destination) else { return }
         do {
             try await S3Service.shared.deleteObject(key: object.key, config: config)
+            DownloadStore.shared.remove(for: object, destination: destination)
             onDelete()
             dismiss()
         } catch {
@@ -575,8 +784,30 @@ struct ObjectDetailView: View {
     }
 }
 
-private struct RemoteImagePreview: View {
+/// Identifiable wrapper so a plain file URL can drive sheet(item:).
+struct ExportItem: Identifiable {
+    let id = UUID()
     let url: URL
+}
+
+/// UIDocumentPickerViewController in export-a-copy mode: lets the user copy
+/// a downloaded file anywhere the Files app reaches (iCloud Drive, other
+/// providers, On My iPhone).
+struct DocumentExporter: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+}
+
+private struct RemoteImagePreview: View {
+    /// Share link to fetch when there's no local copy.
+    var url: URL? = nil
+    /// Downloaded copy: preferred, full quality, no network needed.
+    var localURL: URL? = nil
 
     @State private var config = ConfigStore.shared
     @State private var network = NetworkMonitor.shared
@@ -624,7 +855,7 @@ private struct RemoteImagePreview: View {
         .frame(height: 320)
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .task(id: url) {
+        .task(id: localURL ?? url) {
             didRequestPreview = false
             if !shouldWaitForTap {
                 await load()
@@ -632,8 +863,11 @@ private struct RemoteImagePreview: View {
         }
     }
 
+    /// The cellular tap-gate only applies to remote fetches — a downloaded
+    /// copy renders straight from disk.
     private var shouldWaitForTap: Bool {
-        config.requiresTapForCellularPreviews && network.isOnCellular && !didRequestPreview
+        localURL == nil
+            && config.requiresTapForCellularPreviews && network.isOnCellular && !didRequestPreview
     }
 
     private func previewNotice(title: String, message: String) -> some View {
@@ -658,16 +892,28 @@ private struct RemoteImagePreview: View {
         defer { isLoading = false }
 
         do {
-            let request = URLRequest(url: url)
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let data: Data
+            if let localURL {
+                data = try Data(contentsOf: localURL)
+            } else if let url {
+                let request = URLRequest(url: url)
+                let (remoteData, response) = try await URLSession.shared.data(for: request)
 
-            if let http = response as? HTTPURLResponse,
-               !(200...299).contains(http.statusCode) {
-                errorMessage = "The link returned HTTP \(http.statusCode). Copy the link to check whether the file still exists."
+                if let http = response as? HTTPURLResponse,
+                   !(200...299).contains(http.statusCode) {
+                    errorMessage = "The link returned HTTP \(http.statusCode). Copy the link to check whether the file still exists."
+                    return
+                }
+                data = remoteData
+            } else {
+                errorMessage = "The image preview could not be loaded."
                 return
             }
 
-            let uiImage = config.rendersFullImagePreviews
+            // Downloaded copies always render at full quality — that's the
+            // point of downloading; the bounded decode only applies to
+            // remote previews.
+            let uiImage = localURL != nil || config.rendersFullImagePreviews
                 ? UIImage(data: data)
                 : Self.downsampledImage(from: data, maxPixel: 1200)
 

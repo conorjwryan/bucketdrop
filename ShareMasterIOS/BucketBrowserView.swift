@@ -2,9 +2,10 @@
 //  BucketBrowserView.swift
 //  ShareMasterIOS
 //
-//  Lists the objects in a destination's bucket (under its path prefix).
-//  Tap a row for a preview + actions; swipe or context menu for quick
-//  copy-link and delete.
+//  Lists one folder level of a destination's bucket (under its path
+//  prefix), 10 entries per page. "Folders" are S3 CommonPrefixes — tap
+//  one to drill in; tap a file row for a preview + actions; swipe or
+//  context menu for quick copy-link and delete.
 //
 
 import SwiftUI
@@ -12,9 +13,17 @@ import ImageIO
 
 struct BucketBrowserView: View {
     let destination: Destination
+    /// The key prefix this view lists. `nil` means the destination root
+    /// (its configured path prefix); subfolders push new instances.
+    var prefix: String? = nil
 
+    private static let pageSize = 10
+
+    @State private var folders: [S3Folder] = []
     @State private var objects: [S3Object] = []
+    @State private var nextToken: String?
     @State private var isLoading = false
+    @State private var isLoadingMore = false
     @State private var errorMessage: String?
     @State private var selectedObject: S3Object?
     @State private var copiedKey: String?
@@ -23,12 +32,28 @@ struct BucketBrowserView: View {
         ConfigStore.shared.s3Config(for: destination)
     }
 
+    private var listPrefix: String {
+        prefix ?? config?.pathPrefix ?? ""
+    }
+
+    private var isEmpty: Bool {
+        folders.isEmpty && objects.isEmpty
+    }
+
+    private var title: String {
+        if let prefix {
+            let trimmed = prefix.hasSuffix("/") ? String(prefix.dropLast()) : prefix
+            return (trimmed as NSString).lastPathComponent
+        }
+        return destination.name.isEmpty ? destination.bucket : destination.name
+    }
+
     var body: some View {
         Group {
-            if isLoading && objects.isEmpty {
+            if isLoading && isEmpty {
                 ProgressView("Loading…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let errorMessage, objects.isEmpty {
+            } else if let errorMessage, isEmpty {
                 ContentUnavailableView {
                     Label("Couldn't Load", systemImage: "exclamationmark.icloud")
                 } description: {
@@ -36,17 +61,17 @@ struct BucketBrowserView: View {
                 } actions: {
                     Button("Retry") { Task { await refresh() } }
                 }
-            } else if objects.isEmpty {
+            } else if isEmpty {
                 ContentUnavailableView(
                     "Empty",
                     systemImage: "tray",
-                    description: Text("No files in this destination yet.")
+                    description: Text("No files in this folder yet.")
                 )
             } else {
                 objectList
             }
         }
-        .navigationTitle(destination.name.isEmpty ? destination.bucket : destination.name)
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -65,38 +90,59 @@ struct BucketBrowserView: View {
     }
 
     private var objectList: some View {
-        List(objects) { object in
-            Button {
-                selectedObject = object
-            } label: {
-                ObjectRow(object: object, copied: copiedKey == object.key)
-            }
-            .foregroundStyle(.primary)
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) {
-                    Task { await delete(object) }
+        List {
+            ForEach(folders) { folder in
+                NavigationLink {
+                    BucketBrowserView(destination: destination, prefix: folder.prefix)
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    FolderRow(folder: folder)
                 }
             }
-            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+
+            ForEach(objects) { object in
                 Button {
-                    Task { await copyLink(object) }
+                    selectedObject = object
                 } label: {
-                    Label("Copy Link", systemImage: "link")
+                    ObjectRow(object: object, copied: copiedKey == object.key)
                 }
-                .tint(.blue)
+                .foregroundStyle(.primary)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        Task { await delete(object) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    Button {
+                        Task { await copyLink(object) }
+                    } label: {
+                        Label("Copy Link", systemImage: "link")
+                    }
+                    .tint(.blue)
+                }
+                .contextMenu {
+                    Button {
+                        Task { await copyLink(object) }
+                    } label: {
+                        Label("Copy Link", systemImage: "link")
+                    }
+                    Button(role: .destructive) {
+                        Task { await delete(object) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
             }
-            .contextMenu {
-                Button {
-                    Task { await copyLink(object) }
-                } label: {
-                    Label("Copy Link", systemImage: "link")
+
+            if nextToken != nil {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
                 }
-                Button(role: .destructive) {
-                    Task { await delete(object) }
-                } label: {
-                    Label("Delete", systemImage: "trash")
+                .onAppear {
+                    Task { await loadMore() }
                 }
             }
         }
@@ -110,10 +156,33 @@ struct BucketBrowserView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            objects = try await S3Service.shared.listObjects(config: config)
+            let page = try await S3Service.shared.listDirectory(
+                config: config, prefix: listPrefix, pageSize: Self.pageSize
+            )
+            folders = page.folders
+            objects = page.objects
+            nextToken = page.nextContinuationToken
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadMore() async {
+        guard let config, let token = nextToken, !isLoadingMore else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let page = try await S3Service.shared.listDirectory(
+                config: config, prefix: listPrefix,
+                continuationToken: token, pageSize: Self.pageSize
+            )
+            folders.append(contentsOf: page.folders)
+            objects.append(contentsOf: page.objects)
+            nextToken = page.nextContinuationToken
+        } catch {
+            // Keep what's loaded; a retry happens if the spinner reappears.
+            nextToken = token
         }
     }
 
@@ -135,6 +204,22 @@ struct BucketBrowserView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+struct FolderRow: View {
+    let folder: S3Folder
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "folder")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+            Text(folder.name)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 2)
     }
 }
 

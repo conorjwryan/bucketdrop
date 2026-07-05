@@ -158,6 +158,67 @@ actor S3Service {
         return parseListResponse(data)
     }
 
+    /// Lists one "directory" level under `prefix` using the delimiter so S3
+    /// groups deeper keys into CommonPrefixes (folders) server-side. Pages
+    /// through results `pageSize` at a time — pass the returned continuation
+    /// token to fetch the next page. Each call is a single LIST request.
+    func listDirectory(
+        config: S3Config,
+        prefix: String,
+        continuationToken: String? = nil,
+        pageSize: Int = 10
+    ) async throws -> S3DirectoryPage {
+        guard config.isConfigured else {
+            throw S3Error(message: "Destination not configured")
+        }
+
+        let host = buildHost(config)
+        let endpoint = buildEndpoint(config)
+        let signingPath = buildSigningPath(config, objectKey: nil)
+
+        // Params must stay in alphabetical order — the query string is signed verbatim.
+        var query = ""
+        if let continuationToken {
+            query += "continuation-token=\(awsURLEncodeQuery(continuationToken))&"
+        }
+        query += "delimiter=%2F&list-type=2&max-keys=\(pageSize)"
+        if !prefix.isEmpty {
+            query += "&prefix=\(awsURLEncodeQuery(prefix))"
+        }
+
+        guard let url = URL(string: "\(endpoint)/?\(query)") else {
+            throw S3Error(message: "Invalid URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+
+        let headers = try signRequest(
+            method: "GET",
+            path: signingPath,
+            query: query,
+            headers: ["host": host],
+            payload: Data(),
+            config: config
+        )
+
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw S3Error(message: "Invalid response")
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw s3Error("List", status: httpResponse.statusCode, body: data)
+        }
+
+        return parseDirectoryResponse(data)
+    }
+
     // MARK: - Download Object
 
     /// Downloads a file from S3
@@ -1028,6 +1089,55 @@ actor S3Service {
         return objects.sorted { $0.lastModified > $1.lastModified }
     }
 
+    private func parseDirectoryResponse(_ data: Data) -> S3DirectoryPage {
+        guard let xml = String(data: data, encoding: .utf8) else {
+            return S3DirectoryPage(folders: [], objects: [], nextContinuationToken: nil)
+        }
+
+        var folders: [S3Folder] = []
+        for chunk in xml.components(separatedBy: "<CommonPrefixes>").dropFirst() {
+            guard let start = chunk.range(of: "<Prefix>"),
+                  let end = chunk.range(of: "</Prefix>") else { continue }
+            folders.append(S3Folder(prefix: String(chunk[start.upperBound..<end.lowerBound])))
+        }
+
+        var objects: [S3Object] = []
+        for content in xml.components(separatedBy: "<Contents>").dropFirst() {
+            guard let keyStart = content.range(of: "<Key>"),
+                  let keyEnd = content.range(of: "</Key>") else { continue }
+
+            let key = String(content[keyStart.upperBound..<keyEnd.lowerBound])
+
+            // Skip folder-marker objects (zero-byte keys ending in "/"),
+            // including the placeholder for the prefix being listed.
+            if key.hasSuffix("/") { continue }
+
+            var size: Int64 = 0
+            if let sizeStart = content.range(of: "<Size>"),
+               let sizeEnd = content.range(of: "</Size>") {
+                size = Int64(content[sizeStart.upperBound..<sizeEnd.lowerBound]) ?? 0
+            }
+
+            var lastModified: Date?
+            if let dateStart = content.range(of: "<LastModified>"),
+               let dateEnd = content.range(of: "</LastModified>") {
+                lastModified = parseLastModified(String(content[dateStart.upperBound..<dateEnd.lowerBound]))
+            }
+
+            objects.append(S3Object(key: key, size: size, lastModified: lastModified ?? Date()))
+        }
+
+        // NextContinuationToken is only present when the listing is truncated.
+        var nextToken: String?
+        if let tokenStart = xml.range(of: "<NextContinuationToken>"),
+           let tokenEnd = xml.range(of: "</NextContinuationToken>") {
+            nextToken = String(xml[tokenStart.upperBound..<tokenEnd.lowerBound])
+        }
+
+        // Keep S3's lexicographic order — pagination depends on it staying stable.
+        return S3DirectoryPage(folders: folders, objects: objects, nextContinuationToken: nextToken)
+    }
+
     private func parseLastModified(_ value: String) -> Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1138,6 +1248,25 @@ extension DownloadProgressDelegate: URLSessionDownloadDelegate {
         didFinishDownloadingTo location: URL
     ) {
         // Required by protocol but handled by async/await
+    }
+}
+
+/// One page of a delimiter-based directory listing.
+struct S3DirectoryPage {
+    let folders: [S3Folder]
+    let objects: [S3Object]
+    let nextContinuationToken: String?
+}
+
+/// A CommonPrefix returned by a delimiter listing — a virtual folder.
+struct S3Folder: Identifiable {
+    let id = UUID()
+    /// Full key prefix, always ending in "/".
+    let prefix: String
+
+    var name: String {
+        let trimmed = prefix.hasSuffix("/") ? String(prefix.dropLast()) : prefix
+        return (trimmed as NSString).lastPathComponent
     }
 }
 

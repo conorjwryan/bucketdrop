@@ -10,6 +10,7 @@ These docs describe how the codebase is organised, how the three app targets wor
 |---|---|
 | [Architecture](architecture.md) | Targets, the `Shared/` engine, the Accounts/Destinations data model, `ConfigStore`, where everything is stored |
 | [Transfer engine](transfer-engine.md) | `S3Service` (SigV4, multipart upload, ranged download), `RateLimiter` bandwidth caps, `NamingTemplate` |
+| [Provider policies](provider_policies.md) | How AWS S3 and Cloudflare R2 differ — S3-spec subsets, listing-order guarantees, what LIST/GET/egress cost, ACL behaviour — and which claims are verified per provider |
 | [Sync](sync.md) | How config + credentials sync between macOS and iOS via iCloud Keychain, refresh/polling triggers, per-device settings, known limitations |
 | [macOS app](macos.md) | Menu-bar popover, drag-and-drop (including drag onto the menu bar icon), lazy popover lifecycle, Settings window, per-destination download locations |
 | [iOS app & share extension](ios.md) | In-app uploads (`UploadManager`), share-sheet uploads, App Group storage, mobile-data gating, hidden destinations ("decoy mode") |

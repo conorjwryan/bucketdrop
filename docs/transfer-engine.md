@@ -16,6 +16,10 @@ Two ListObjectsV2 entry points:
 
 Signing gotcha: the query string goes into the SigV4 canonical request **verbatim**, so parameters must be assembled in alphabetical order (`continuation-token`, `delimiter`, `list-type`, `max-keys`, `prefix`).
 
+### Creating folders
+
+`createFolder(named:under:config:)` makes an empty "folder" appear by writing a hidden zero-byte object at `<prefix><name>/.folder_placeholder` (key name in `S3Service.folderPlaceholderName`). The AWS-console convention — a bare zero-byte `name/` marker — **doesn't work on R2**, which returns it in `Contents` instead of rolling it into `CommonPrefixes`; any key *under* the prefix forces every S3 implementation to report the folder. Both list parsers hide placeholder keys (along with `/`-suffixed markers), so inside a fresh folder the app shows an empty listing — but the placeholder **is visible in the provider's own dashboard**. Delete everything in a folder including its placeholder and the folder disappears; that's normal prefix semantics, not a bug.
+
 ## Errors
 
 `s3Error()` translates the XML `<Code>`/`<Message>` body into a friendly message, and `S3Error` carries the raw `code` alongside it. `S3Error.isPermissionIssue` groups the credential/policy family (`AccessDenied`, `AllAccessDisabled`, `AccountProblem`, `InvalidAccessKeyId`, `SignatureDoesNotMatch`; a 403 with an unparseable body counts as `AccessDenied`) so UI can show permission-specific guidance — see the iOS browser's warning-triangle state.

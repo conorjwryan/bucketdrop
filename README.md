@@ -21,7 +21,7 @@ ShareMaster is a macOS menu bar utility (and iOS app) for uploading files to S3-
 
 ### iOS
 
-The iOS app has the same features as the MacOS app, where opening the app allows you to view destinations and download files, but main focus of the iOS app is being unobtrusive to your workflow by allowing you to upload files through the Share Sheet.
+The iOS app has the same features as the MacOS app, where opening the app allows you to view destinations and download files, but main focus of the iOS app is being unobtrusive to your workflow by allowing you to upload files through the Share Sheet and quickly get a link to said file.
 
 ## Documentation
 
@@ -29,7 +29,7 @@ Developer documentation — architecture, the transfer engine, cross-device sync
 
 ## Note on Installation
 
-I don't have the money right now to spare for an Apple Developer Subscription :( 
+I don't have the money right now to spare for an Apple Developer Subscription :(
 
 This means for you to run either the MacOS or iOS apps you're going to have to download and compile this yourself.
 

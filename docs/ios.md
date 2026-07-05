@@ -10,7 +10,7 @@ On iOS, `ConfigStore` reads/writes the App Group `group.com.cjwr.ShareMaster` fo
 
 - `ShareMasterIOSApp.swift` — entry point; also warms `NetworkMonitor` at launch (see below).
 - `DestinationListView` — root list of destinations → navigates to `BucketBrowserView`. The `NavigationStack` here carries the upload status bar and all upload alerts.
-- `BucketBrowserView` — see next section.
+- `BucketBrowserView` — see next section; its toolbar also carries a "…" menu for creating a destination from the open folder (or jumping to the matching destination's settings).
 - `IOSSettingsView` — account/destination editors (with Duplicate), account transfer defaults, per-destination transfer overrides, Sync section, cellular and preview toggles.
 - `UploadMenu` — the toolbar "+": Photo Library (PhotosPicker/`Transferable`, copied to a temp file) and Files (`fileImporter`, security-scoped temp copy). Inside a bucket browser it also offers **New Folder** (hidden when the menu has no fixed destination, i.e. on the root list): a name prompt → `S3Service.createFolder` under the currently open prefix → `onUploaded()` refreshes the listing. See [Transfer engine](transfer-engine.md#creating-folders) for the placeholder-object mechanism and the R2 quirk it works around.
 - `UploadManager` — see next section.
@@ -24,6 +24,13 @@ Navigation is prefix-based: the view takes an optional `prefix` (nil = the desti
 Listing failures that are permission problems (`S3Error.isPermissionIssue`) get a dedicated full-screen state — yellow warning triangle, "Permission Denied", guidance to check the account's credentials and `s3:ListBucket` policy plus the actual S3 message — instead of the generic "Couldn't Load" view. This matters for up-navigation: credentials scoped to the destination's prefix will AccessDenied at the bucket root.
 
 The toolbar "+" uploads **into the folder currently open**: the browser passes its listing prefix through `UploadMenu` → `UploadManager` → `S3Service.upload(keyPrefix:)`, and the status bar names the actual target (destination name when it matches the configured prefix, `bucket/folder` otherwise). Object actions (copy link, preview, delete) work on full keys, so they work on files found outside the destination's prefix too.
+
+### The "…" menu: destinations from folders
+
+Next to the "+" there's a context-aware "…" menu, present at every browser level (including levels above the destination root reached via the up row):
+
+- **New Destination Here** — saves a copy of the destination being browsed with a fresh ID, a prompted name, and `pathPrefix` set to the open folder. Everything else (account, bucket, link mode, naming template, transfer overrides, the `hidden` flag) is inherited, so no credentials are re-entered and the copy syncs across devices like any other edit (see [Sync](sync.md)). The name prompt pre-fills with the folder's name, suffixed via `ConfigStore.copyName` only when that name is already taken. `upsertDestination` normalizes the prefix and appends the copy to the end of the list.
+- **View Destination Settings** — shown *instead* when the open folder is already the root of an existing destination (same account + bucket + normalized prefix, matched across **all** destinations, not just the one being browsed). Opens the standard `DestinationEditorView` sheet, so you can't create an accidental duplicate of a destination that already exists.
 
 ## In-app uploads: UploadManager
 

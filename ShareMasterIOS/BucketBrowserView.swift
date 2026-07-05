@@ -211,27 +211,6 @@ struct BucketBrowserView: View {
         .sheet(item: $exportItem) { item in
             DocumentExporter(url: item.url)
         }
-        .confirmationDialog(
-            deleteTitle,
-            isPresented: Binding(
-                get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingDelete
-        ) { object in
-            Button("Delete", role: .destructive) {
-                pendingDelete = nil
-                Task { await delete(object) }
-            }
-            Button("Cancel", role: .cancel) { pendingDelete = nil }
-        } message: { object in
-            Text(deleteMessage(for: object))
-        }
-    }
-
-    private var deleteTitle: String {
-        pendingDelete.map { "Delete \u{201C}\($0.filename)\u{201D}?" } ?? "Delete?"
     }
 
     private func deleteMessage(for object: S3Object) -> String {
@@ -336,11 +315,30 @@ struct BucketBrowserView: View {
                             Label("Remove Download", systemImage: "arrow.down.circle.dotted")
                         }
                     }
+                    Divider()
                     Button(role: .destructive) {
                         pendingDelete = object
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
+                }
+                // Attached to the row (not the List) so iOS anchors the
+                // popover-style dialog to the file being deleted.
+                .confirmationDialog(
+                    "Delete \u{201C}\(object.filename)\u{201D}?",
+                    isPresented: Binding(
+                        get: { pendingDelete?.id == object.id },
+                        set: { if !$0 { pendingDelete = nil } }
+                    ),
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete", role: .destructive) {
+                        pendingDelete = nil
+                        Task { await delete(object) }
+                    }
+                    Button("Cancel", role: .cancel) { pendingDelete = nil }
+                } message: {
+                    Text(deleteMessage(for: object))
                 }
             }
 
@@ -735,6 +733,21 @@ struct ObjectDetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                    // On the button itself so the dialog anchors to it.
+                    .confirmationDialog(
+                        "Delete \u{201C}\(object.filename)\u{201D}?",
+                        isPresented: $confirmDelete,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Delete", role: .destructive) {
+                            Task { await deleteObject() }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text(downloadState == .notDownloaded
+                            ? "This permanently deletes the file from \(destination.bucket)."
+                            : "This permanently deletes the file from \(destination.bucket). Its downloaded copy on this device is removed too.")
+                    }
                 }
                 .padding(.horizontal)
 
@@ -749,20 +762,6 @@ struct ObjectDetailView: View {
             }
             .sheet(item: $exportItem) { item in
                 DocumentExporter(url: item.url)
-            }
-            .confirmationDialog(
-                "Delete \u{201C}\(object.filename)\u{201D}?",
-                isPresented: $confirmDelete,
-                titleVisibility: .visible
-            ) {
-                Button("Delete", role: .destructive) {
-                    Task { await deleteObject() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(downloadState == .notDownloaded
-                    ? "This permanently deletes the file from \(destination.bucket)."
-                    : "This permanently deletes the file from \(destination.bucket). Its downloaded copy on this device is removed too.")
             }
             .task {
                 guard let config = ConfigStore.shared.s3Config(for: destination) else { return }

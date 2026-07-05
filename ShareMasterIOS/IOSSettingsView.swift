@@ -429,23 +429,24 @@ struct DownloadsSettingsSection: View {
                 Button("Remove All Downloads", role: .destructive) {
                     confirmRemoveAll = true
                 }
+                // On the button itself so the dialog anchors to it.
+                .confirmationDialog(
+                    "Remove All Downloads?",
+                    isPresented: $confirmRemoveAll,
+                    titleVisibility: .visible
+                ) {
+                    Button("Remove All", role: .destructive) {
+                        store.removeAll()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Removes every downloaded copy from this device. Nothing is deleted from your buckets.")
+                }
             }
         } header: {
             Text("Downloads")
         } footer: {
             Text(footerText)
-        }
-        .confirmationDialog(
-            "Remove All Downloads?",
-            isPresented: $confirmRemoveAll,
-            titleVisibility: .visible
-        ) {
-            Button("Remove All", role: .destructive) {
-                store.removeAll()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Removes every downloaded copy from this device. Nothing is deleted from your buckets.")
         }
     }
 

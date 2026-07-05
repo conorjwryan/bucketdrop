@@ -9,6 +9,8 @@
 //  used inside the bucket browser the destination is fixed and the upload
 //  starts immediately; from the root list a destination picker sheet is
 //  shown first. Destinations can copy links to the clipboard on completion.
+//  Inside the bucket browser the menu also offers "New Folder", which
+//  creates an S3 folder-marker object under the current prefix.
 //
 
 import SwiftUI
@@ -31,6 +33,9 @@ struct UploadMenu: View {
     @State private var showPhotosPicker = false
     @State private var showFileImporter = false
     @State private var uploadRequest: UploadRequest?
+    @State private var showNewFolderPrompt = false
+    @State private var newFolderName = ""
+    @State private var newFolderError: String?
 
     var body: some View {
         Menu {
@@ -44,8 +49,35 @@ struct UploadMenu: View {
             } label: {
                 Label("Choose Files", systemImage: "folder")
             }
+            // Folders need a bucket to live in, so only offer this when the
+            // menu is tied to a destination (i.e. inside the bucket browser).
+            if destination != nil {
+                Divider()
+                Button {
+                    newFolderName = ""
+                    showNewFolderPrompt = true
+                } label: {
+                    Label("New Folder", systemImage: "folder.badge.plus")
+                }
+            }
         } label: {
             Image(systemName: "plus")
+        }
+        .alert("New Folder", isPresented: $showNewFolderPrompt) {
+            TextField("Folder name", text: $newFolderName)
+                .textInputAutocapitalization(.never)
+            Button("Create") { createFolder() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Creates a folder in the current directory.")
+        }
+        .alert("Couldn't Create Folder", isPresented: .init(
+            get: { newFolderError != nil },
+            set: { if !$0 { newFolderError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(newFolderError ?? "")
         }
         .photosPicker(isPresented: $showPhotosPicker, selection: $photoSelection)
         .onChange(of: photoSelection) { _, items in
@@ -86,6 +118,26 @@ struct UploadMenu: View {
             UploadManager.shared.start(files: files, destination: destination, keyPrefix: keyPrefix, onUploaded: onUploaded)
         } else {
             uploadRequest = UploadRequest(files: files)
+        }
+    }
+
+    /// Creates an S3 "folder" (a zero-byte "/"-suffixed marker object) in
+    /// the directory this menu is scoped to, then refreshes the listing.
+    private func createFolder() {
+        guard let destination,
+              let config = ConfigStore.shared.s3Config(for: destination) else { return }
+        let name = newFolderName
+        Task {
+            do {
+                try await S3Service.shared.createFolder(
+                    named: name,
+                    under: keyPrefix ?? config.pathPrefix,
+                    config: config
+                )
+                onUploaded()
+            } catch {
+                newFolderError = error.localizedDescription
+            }
         }
     }
 

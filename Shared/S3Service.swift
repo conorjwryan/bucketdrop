@@ -127,6 +127,32 @@ actor S3Service {
         return UploadResult(key: key, url: url)
     }
 
+    // MARK: - Create Folder
+
+    /// Creates a "folder" the way the AWS console does: a zero-byte object
+    /// whose key ends in "/". Delimiter listings then report it as a
+    /// CommonPrefix even while empty, and parseDirectoryResponse already
+    /// hides the marker object itself.
+    func createFolder(named name: String, under prefix: String, config: S3Config) async throws {
+        guard config.isConfigured else {
+            throw S3Error(message: "Destination not configured. Please check its account and bucket in settings.")
+        }
+
+        let trimmed = name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else {
+            throw S3Error(message: "Folder name can't be empty")
+        }
+
+        let key = prefix + trimmed + "/"
+        try await putObject(
+            key: key, data: Data(),
+            contentType: "application/x-directory",
+            config: config, progress: nil
+        )
+    }
+
     // MARK: - List Objects
 
     func listObjects(config: S3Config) async throws -> [S3Object] {

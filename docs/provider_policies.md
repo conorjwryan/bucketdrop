@@ -37,7 +37,7 @@ Both AWS and R2 bill list operations **per request, not per key returned** — a
 
 Consequences for the app:
 
-- The browser's default 10-per-page lazy listing exists so unbrowsed pages cost nothing — but note the *fetch-all* sort path (200 keys per LIST) is actually **cheaper per key** than 10-per-page, since billing is per request. The lazy path wins only when the user never scrolls.
+- Because billing is per request, the browser uses **large pages (200 keys per LIST)** everywhere — a 200-key page costs the same as a 10-key one, so small pages would just multiply requests. (The browser originally paged 10 at a time on the mistaken assumption that small pages saved money.) Pagination itself is kept only so enormous folders load incrementally.
 - **Egress is where the providers really diverge**: image previews, downloads, and anyone opening shared links pull object bytes. On R2 that's free; on AWS it's ~$0.09/GB once past the free allowance. The iOS cellular-preview gating saves the *user's* data plan either way, but only on AWS does it also save the bucket owner money.
 - R2's free tier (1M Class A/month) makes browsing effectively free at personal scale; on AWS every LIST is billed, though at $5/million it takes heavy use to notice.
 

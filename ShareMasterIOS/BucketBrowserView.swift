@@ -3,7 +3,7 @@
 //  ShareMasterIOS
 //
 //  Lists one folder level of a destination's bucket (under its path
-//  prefix), 10 entries per page. "Folders" are S3 CommonPrefixes — tap
+//  prefix), 200 entries per page. "Folders" are S3 CommonPrefixes — tap
 //  one to drill in; tap a file row for a preview + actions; swipe or
 //  context menu for quick copy-link and delete.
 //
@@ -21,7 +21,10 @@ struct BucketBrowserView: View {
     /// keep climbing to the bucket root.
     var showsParentLink: Bool? = nil
 
-    private static let pageSize = 10
+    /// Both AWS and R2 bill LIST per request, not per key, so a 200-key page
+    /// costs the same as a 10-key one — see docs/provider_policies.md. Paging
+    /// still exists so enormous folders load incrementally.
+    private static let pageSize = 200
 
     @State private var folders: [S3Folder] = []
     @State private var objects: [S3Object] = []
@@ -337,7 +340,7 @@ struct BucketBrowserView: View {
                 for _ in 0..<25 {
                     let page = try await S3Service.shared.listDirectory(
                         config: config, prefix: listPrefix,
-                        continuationToken: token, pageSize: 200
+                        continuationToken: token, pageSize: Self.pageSize
                     )
                     allFolders.append(contentsOf: page.folders)
                     allObjects.append(contentsOf: page.objects)

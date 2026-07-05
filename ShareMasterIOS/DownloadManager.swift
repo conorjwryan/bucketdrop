@@ -272,7 +272,7 @@ struct DownloadStatusBar: View {
 /// from whatever's behind it, unlike a plain material that tends to blend
 /// into a similarly-coloured background. Uses real Liquid Glass on iOS 26+,
 /// falling back to a white-tinted blur with a hairline edge and soft shadow.
-private struct FrostedGlassBar: ViewModifier {
+struct FrostedGlassBar: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             content

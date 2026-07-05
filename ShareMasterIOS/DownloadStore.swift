@@ -94,6 +94,37 @@ final class DownloadStore {
         return entry.size == object.size && sameDate ? .downloaded : .outdated
     }
 
+    /// An offline mirror of a directory listing: the downloaded objects for
+    /// `destination` whose keys sit directly under `prefix`, plus the
+    /// immediate subfolders that hold deeper downloads. Lets the browser show
+    /// local files (and keep drilling into folders) with no network.
+    func downloadedDirectory(
+        for destination: Destination, prefix: String
+    ) -> (folders: [S3Folder], objects: [S3Object]) {
+        _ = revision
+        let keyPrefix = "\(destination.accountId.uuidString)|\(destination.bucket)|"
+        var objects: [S3Object] = []
+        var folderPrefixes: Set<String> = []
+        for (mapKey, entry) in entries {
+            guard mapKey.hasPrefix(keyPrefix) else { continue }
+            let objectKey = String(mapKey.dropFirst(keyPrefix.count))
+            guard objectKey.hasPrefix(prefix),
+                  FileManager.default.fileExists(atPath: fileURL(for: entry).path) else { continue }
+            let remainder = objectKey.dropFirst(prefix.count)
+            if let slash = remainder.firstIndex(of: "/") {
+                // Deeper in a subfolder — surface only the folder itself.
+                folderPrefixes.insert(prefix + remainder[..<slash] + "/")
+            } else {
+                objects.append(S3Object(
+                    key: objectKey, size: entry.size,
+                    lastModified: entry.lastModified, etag: entry.etag
+                ))
+            }
+        }
+        let folders = folderPrefixes.sorted().map { S3Folder(prefix: $0) }
+        return (folders, objects)
+    }
+
     /// The local file for an object, nil when not downloaded.
     func localURL(for object: S3Object, destination: Destination) -> URL? {
         guard let entry = entries[entryKey(for: object, destination: destination)] else { return nil }

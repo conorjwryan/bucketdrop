@@ -21,14 +21,20 @@ import Network
 final class NetworkMonitor {
     static let shared = NetworkMonitor()
     private(set) var isOnCellular = false
+    /// Whether any usable network path exists. Starts optimistic so the very
+    /// first listing after launch isn't misreported as offline before the
+    /// monitor's first callback lands.
+    private(set) var isConnected = true
 
     private let monitor = NWPathMonitor()
 
     private init() {
         monitor.pathUpdateHandler = { path in
             let cellular = path.status == .satisfied && path.usesInterfaceType(.cellular)
+            let connected = path.status == .satisfied
             Task { @MainActor in
                 NetworkMonitor.shared.isOnCellular = cellular
+                NetworkMonitor.shared.isConnected = connected
             }
         }
         monitor.start(queue: DispatchQueue(label: "com.cjwr.ShareMaster.NetworkMonitor"))

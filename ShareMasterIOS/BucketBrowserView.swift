@@ -39,6 +39,10 @@ struct BucketBrowserView: View {
     @State private var copiedKey: String?
     @State private var downloadStore = DownloadStore.shared
     @State private var downloads = DownloadManager.shared
+    @State private var network = NetworkMonitor.shared
+    /// True when the current listing is the local downloads fallback shown
+    /// because the network was unreachable, not a live bucket listing.
+    @State private var isShowingOfflineCache = false
     /// Object awaiting delete confirmation (swipe or context menu).
     @State private var pendingDelete: S3Object?
     /// Downloaded file being exported via the Files document picker.
@@ -104,6 +108,19 @@ struct BucketBrowserView: View {
             if isLoading && isEmpty {
                 ProgressView("Loading…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if isShowingOfflineCache && isEmpty && parentPrefix == nil {
+                ContentUnavailableView {
+                    Label {
+                        Text("No Connection")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                } description: {
+                    Text("You're offline. Nothing in this folder has been downloaded for offline use.")
+                } actions: {
+                    Button("Try Again") { Task { await refresh() } }
+                }
             } else if let errorMessage, isEmpty {
                 if isPermissionError {
                     ContentUnavailableView {
@@ -354,6 +371,30 @@ struct BucketBrowserView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top) {
+            if isShowingOfflineCache {
+                offlineBanner
+            }
+        }
+    }
+
+    /// A liquid-glass notice pinned above the list when the network is down
+    /// and the browser is showing only files already downloaded to the phone.
+    private var offlineBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            Text("No connection — showing downloaded files only")
+                .font(.subheadline)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(FrostedGlassBar())
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
     }
 
     /// An existing destination already rooted at the folder being viewed
@@ -427,9 +468,40 @@ struct BucketBrowserView: View {
             loadedSort = sort
             errorMessage = nil
             isPermissionError = false
+            isShowingOfflineCache = false
         } catch {
-            errorMessage = error.localizedDescription
-            isPermissionError = (error as? S3Service.S3Error)?.isPermissionIssue ?? false
+            if isOffline(error) {
+                // No usable network: fall back to whatever's been downloaded
+                // for this folder so the user can still open their files.
+                let local = downloadStore.downloadedDirectory(for: destination, prefix: listPrefix)
+                folders = local.folders
+                objects = local.objects
+                nextToken = nil
+                loadedSort = sort
+                errorMessage = nil
+                isPermissionError = false
+                isShowingOfflineCache = true
+            } else {
+                errorMessage = error.localizedDescription
+                isPermissionError = (error as? S3Service.S3Error)?.isPermissionIssue ?? false
+                isShowingOfflineCache = false
+            }
+        }
+    }
+
+    /// Whether a listing failure looks like a connectivity problem (as
+    /// opposed to a permission or server error), so we should show the
+    /// offline downloads fallback instead of an error.
+    private func isOffline(_ error: Error) -> Bool {
+        if !network.isConnected { return true }
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost,
+             .cannotConnectToHost, .cannotFindHost, .timedOut,
+             .dataNotAllowed, .internationalRoamingOff:
+            return true
+        default:
+            return false
         }
     }
 

@@ -11,13 +11,18 @@ On iOS, `ConfigStore` reads/writes the App Group `group.com.cjwr.ShareMaster` fo
 - `ShareMasterIOSApp.swift` — entry point; also warms `NetworkMonitor` at launch (see below).
 - `DestinationListView` — root list of destinations → navigates to `BucketBrowserView`. The `NavigationStack` here carries the upload status bar and all upload alerts.
 - `BucketBrowserView` — see next section; its toolbar also carries a "…" menu for creating a destination from the open folder (or jumping to the matching destination's settings).
-- `IOSSettingsView` — account/destination editors (with Duplicate), account transfer defaults, per-destination transfer overrides, Sync section, cellular and preview toggles.
+- `IOSSettingsView` — account/destination editors (with Duplicate), account transfer defaults, per-destination transfer overrides and default browser sort, Sync section, cellular and preview toggles.
 - `UploadMenu` — the toolbar "+": Photo Library (PhotosPicker/`Transferable`, copied to a temp file) and Files (`fileImporter`, security-scoped temp copy). Inside a bucket browser it also offers **New Folder** (hidden when the menu has no fixed destination, i.e. on the root list): a name prompt → `S3Service.createFolder` under the currently open prefix → `onUploaded()` refreshes the listing. See [Transfer engine](transfer-engine.md#creating-folders) for the placeholder-object mechanism and the R2 quirk it works around.
 - `UploadManager` — see next section.
 
-## Bucket browser: folders, paging, permissions
+## Bucket browser: folders, sorting, paging, permissions
 
-`BucketBrowserView` shows one "directory" level at a time via `S3Service.listDirectory` (S3 `delimiter=/` CommonPrefixes — see [Transfer engine](transfer-engine.md#listing--folder-navigation)), **10 entries per page**: a spinner row at the bottom auto-loads the next page as it scrolls into view, pull-to-refresh resets to page one, and each page is a single LIST request so unbrowsed pages cost nothing.
+`BucketBrowserView` shows one "directory" level at a time via `S3Service.listDirectory` (S3 `delimiter=/` CommonPrefixes — see [Transfer engine](transfer-engine.md#listing--folder-navigation)). How the level loads depends on the sort order:
+
+- **Name (A to Z)** — S3's native listing order, so it pages lazily, **10 entries per page**: a spinner row at the bottom auto-loads the next page as it scrolls into view, pull-to-refresh resets to page one, and each page is a single LIST request so unbrowsed pages cost nothing.
+- **Recently Uploaded** (the default) and **Name (Z to A)** — S3 can't page these orders, so the browser fetches the **whole level up front** (200 keys per LIST, capped at 25 requests ≈ 5,000 entries as a runaway guard) and sorts client-side (`BucketBrowserView.sorted`). No spinner row — everything is already loaded. Folders have no upload date, so under Recently Uploaded they keep name order; files sort by `lastModified` descending.
+
+The order comes from `BrowserSort` (`Shared/ConfigStore.swift`): each destination stores a default (`Destination.browserSort`, optional in the JSON so old configs decode; the `defaultBrowserSort` accessor falls back to `.recentFirst`), set in `DestinationEditorView`'s **Browsing** section. The "…" menu's **Sort By** picker overrides it for the current view only (`sortOverride`, per pushed browser instance, not persisted). The browser reads the destination's default live from `ConfigStore`, so changing it in the settings sheet opened from the "…" menu reloads the listing on dismiss when the effective order changed.
 
 Navigation is prefix-based: the view takes an optional `prefix` (nil = the destination's configured path prefix); tapping a folder row pushes another `BucketBrowserView` for that folder, so the back button walks back up. Above the destination root there's an "up" row (bucket name / parent folder) that navigates toward the bucket root — it appears at the destination root and on levels reached *via* the up row (`showsParentLink`), not on folders drilled into, where back already covers it. An empty folder still shows the list (not the empty state) when an up row exists, so you can always navigate out.
 
@@ -25,11 +30,12 @@ Listing failures that are permission problems (`S3Error.isPermissionIssue`) get 
 
 The toolbar "+" uploads **into the folder currently open**: the browser passes its listing prefix through `UploadMenu` → `UploadManager` → `S3Service.upload(keyPrefix:)`, and the status bar names the actual target (destination name when it matches the configured prefix, `bucket/folder` otherwise). Object actions (copy link, preview, delete) work on full keys, so they work on files found outside the destination's prefix too.
 
-### The "…" menu: destinations from folders
+### The "…" menu: sorting and destinations from folders
 
 Next to the "+" there's a context-aware "…" menu, present at every browser level (including levels above the destination root reached via the up row):
 
-- **New Destination Here** — saves a copy of the destination being browsed with a fresh ID, a prompted name, and `pathPrefix` set to the open folder. Everything else (account, bucket, link mode, naming template, transfer overrides, the `hidden` flag) is inherited, so no credentials are re-entered and the copy syncs across devices like any other edit (see [Sync](sync.md)). The name prompt pre-fills with the folder's name, suffixed via `ConfigStore.copyName` only when that name is already taken. `upsertDestination` normalizes the prefix and appends the copy to the end of the list.
+- **Sort By** — Recently Uploaded / Name (A to Z) / Name (Z to A), a per-visit override of the destination's default order (see the sorting section above). Changing it re-fetches the level immediately.
+- **New Destination Here** — saves a copy of the destination being browsed with a fresh ID, a prompted name, and `pathPrefix` set to the open folder. Everything else (account, bucket, link mode, naming template, transfer overrides, the `hidden` flag, the default browser sort) is inherited, so no credentials are re-entered and the copy syncs across devices like any other edit (see [Sync](sync.md)). The name prompt pre-fills with the folder's name, suffixed via `ConfigStore.copyName` only when that name is already taken. `upsertDestination` normalizes the prefix and appends the copy to the end of the list.
 - **View Destination Settings** — shown *instead* when the open folder is already the root of an existing destination (same account + bucket + normalized prefix, matched across **all** destinations, not just the one being browsed). Opens the standard `DestinationEditorView` sheet, so you can't create an accidental duplicate of a destination that already exists.
 
 ## In-app uploads: UploadManager

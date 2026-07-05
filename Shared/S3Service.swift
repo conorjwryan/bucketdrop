@@ -129,10 +129,15 @@ actor S3Service {
 
     // MARK: - Create Folder
 
-    /// Creates a "folder" the way the AWS console does: a zero-byte object
-    /// whose key ends in "/". Delimiter listings then report it as a
-    /// CommonPrefix even while empty, and parseDirectoryResponse already
-    /// hides the marker object itself.
+    /// Hidden zero-byte object that makes an empty "folder" show up in
+    /// delimiter listings. A bare "name/" marker (the AWS-console style)
+    /// doesn't work on R2 — it comes back in Contents instead of
+    /// CommonPrefixes — but any key *under* the prefix forces every S3
+    /// implementation to report the folder. Listings hide this key.
+    static let folderPlaceholderName = ".folder_placeholder"
+
+    /// Creates an S3 "folder" by writing a hidden placeholder object at
+    /// "<prefix><name>/.folder_placeholder".
     func createFolder(named name: String, under prefix: String, config: S3Config) async throws {
         guard config.isConfigured else {
             throw S3Error(message: "Destination not configured. Please check its account and bucket in settings.")
@@ -145,10 +150,10 @@ actor S3Service {
             throw S3Error(message: "Folder name can't be empty")
         }
 
-        let key = prefix + trimmed + "/"
+        let key = prefix + trimmed + "/" + Self.folderPlaceholderName
         try await putObject(
             key: key, data: Data(),
-            contentType: "application/x-directory",
+            contentType: "application/octet-stream",
             config: config, progress: nil
         )
     }
@@ -1111,8 +1116,10 @@ actor S3Service {
             let key = String(content[keyStart.upperBound..<keyEnd.lowerBound])
 
             // Skip folder-marker objects (zero-byte keys ending in "/"), e.g.
-            // the "steven/shots/" placeholder that represents the prefix itself.
+            // the "steven/shots/" placeholder that represents the prefix itself,
+            // and the hidden placeholders createFolder writes for empty folders.
             if key.hasSuffix("/") { continue }
+            if key.hasSuffix("/" + Self.folderPlaceholderName) || key == Self.folderPlaceholderName { continue }
 
             var size: Int64 = 0
             if let sizeStart = content.range(of: "<Size>"),
@@ -1153,8 +1160,10 @@ actor S3Service {
             let key = String(content[keyStart.upperBound..<keyEnd.lowerBound])
 
             // Skip folder-marker objects (zero-byte keys ending in "/"),
-            // including the placeholder for the prefix being listed.
+            // including the placeholder for the prefix being listed, and
+            // the hidden placeholders createFolder writes for empty folders.
             if key.hasSuffix("/") { continue }
+            if key.hasSuffix("/" + Self.folderPlaceholderName) || key == Self.folderPlaceholderName { continue }
 
             var size: Int64 = 0
             if let sizeStart = content.range(of: "<Size>"),

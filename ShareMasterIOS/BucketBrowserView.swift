@@ -16,6 +16,10 @@ struct BucketBrowserView: View {
     /// The key prefix this view lists. `nil` means the destination root
     /// (its configured path prefix); subfolders push new instances.
     var prefix: String? = nil
+    /// Whether this level offers an "up" row. `nil` defaults to true only at
+    /// the destination root; views pushed via the up row pass true so you can
+    /// keep climbing to the bucket root.
+    var showsParentLink: Bool? = nil
 
     private static let pageSize = 10
 
@@ -43,9 +47,26 @@ struct BucketBrowserView: View {
     private var title: String {
         if let prefix {
             let trimmed = prefix.hasSuffix("/") ? String(prefix.dropLast()) : prefix
-            return (trimmed as NSString).lastPathComponent
+            let name = (trimmed as NSString).lastPathComponent
+            return name.isEmpty ? destination.bucket : name
         }
         return destination.name.isEmpty ? destination.bucket : destination.name
+    }
+
+    /// The prefix one level above this view, or nil when there's nowhere to
+    /// go. Offered at the destination root and on views reached via the up
+    /// row — folder drill-downs already have the back button.
+    /// "shots/" → "", "a/b/" → "a/".
+    private var parentPrefix: String? {
+        guard showsParentLink ?? (prefix == nil), !listPrefix.isEmpty else { return nil }
+        let trimmed = listPrefix.hasSuffix("/") ? String(listPrefix.dropLast()) : listPrefix
+        let parent = (trimmed as NSString).deletingLastPathComponent
+        return parent.isEmpty ? "" : parent + "/"
+    }
+
+    private var parentName: String {
+        guard let parentPrefix, !parentPrefix.isEmpty else { return destination.bucket }
+        return (String(parentPrefix.dropLast()) as NSString).lastPathComponent
     }
 
     var body: some View {
@@ -61,7 +82,7 @@ struct BucketBrowserView: View {
                 } actions: {
                     Button("Retry") { Task { await refresh() } }
                 }
-            } else if isEmpty {
+            } else if isEmpty && parentPrefix == nil {
                 ContentUnavailableView(
                     "Empty",
                     systemImage: "tray",
@@ -91,6 +112,26 @@ struct BucketBrowserView: View {
 
     private var objectList: some View {
         List {
+            if let parentPrefix {
+                NavigationLink {
+                    BucketBrowserView(destination: destination, prefix: parentPrefix, showsParentLink: true)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.turn.left.up")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28)
+                        Text(parentName)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(parentPrefix.isEmpty ? "bucket root" : "parent folder")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
             ForEach(folders) { folder in
                 NavigationLink {
                     BucketBrowserView(destination: destination, prefix: folder.prefix)

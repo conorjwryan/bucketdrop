@@ -9,16 +9,27 @@ On iOS, `ConfigStore` reads/writes the App Group `group.com.cjwr.ShareMaster` fo
 ## Main app structure
 
 - `ShareMasterIOSApp.swift` — entry point; also warms `NetworkMonitor` at launch (see below).
-- `DestinationListView` — root list of destinations → navigates to `BucketBrowserView` (browse objects, copy links, delete). The `NavigationStack` here carries the upload status bar and all upload alerts.
+- `DestinationListView` — root list of destinations → navigates to `BucketBrowserView`. The `NavigationStack` here carries the upload status bar and all upload alerts.
+- `BucketBrowserView` — see next section.
 - `IOSSettingsView` — account/destination editors (with Duplicate), account transfer defaults, per-destination transfer overrides, Sync section, cellular and preview toggles.
 - `UploadMenu` — the toolbar "+": Photo Library (PhotosPicker/`Transferable`, copied to a temp file) and Files (`fileImporter`, security-scoped temp copy).
 - `UploadManager` — see next section.
+
+## Bucket browser: folders, paging, permissions
+
+`BucketBrowserView` shows one "directory" level at a time via `S3Service.listDirectory` (S3 `delimiter=/` CommonPrefixes — see [Transfer engine](transfer-engine.md#listing--folder-navigation)), **10 entries per page**: a spinner row at the bottom auto-loads the next page as it scrolls into view, pull-to-refresh resets to page one, and each page is a single LIST request so unbrowsed pages cost nothing.
+
+Navigation is prefix-based: the view takes an optional `prefix` (nil = the destination's configured path prefix); tapping a folder row pushes another `BucketBrowserView` for that folder, so the back button walks back up. Above the destination root there's an "up" row (bucket name / parent folder) that navigates toward the bucket root — it appears at the destination root and on levels reached *via* the up row (`showsParentLink`), not on folders drilled into, where back already covers it. An empty folder still shows the list (not the empty state) when an up row exists, so you can always navigate out.
+
+Listing failures that are permission problems (`S3Error.isPermissionIssue`) get a dedicated full-screen state — yellow warning triangle, "Permission Denied", guidance to check the account's credentials and `s3:ListBucket` policy plus the actual S3 message — instead of the generic "Couldn't Load" view. This matters for up-navigation: credentials scoped to the destination's prefix will AccessDenied at the bucket root.
+
+The toolbar "+" uploads **into the folder currently open**: the browser passes its listing prefix through `UploadMenu` → `UploadManager` → `S3Service.upload(keyPrefix:)`, and the status bar names the actual target (destination name when it matches the configured prefix, `bucket/folder` otherwise). Object actions (copy link, preview, delete) work on full keys, so they work on files found outside the destination's prefix too.
 
 ## In-app uploads: UploadManager
 
 `UploadManager` (`@MainActor @Observable` singleton) makes uploads **non-blocking**: it queues batches, runs them sequentially, copies the resulting link(s) to UIPasteboard when the destination setting allows it, and holds a `beginBackgroundTask` so a transfer survives ~30 s after backgrounding. It is **not** a background `URLSession` — very large files still suspend with the app; a full background-session rework of `S3Service` was scoped and deliberately deferred.
 
-`UploadStatusBar` (same file) is a floating bottom bar attached via `.safeAreaInset(edge: .bottom)`: progress while uploading → green completion message, with clipboard wording only when the destination's copy-on-upload setting is enabled (auto-clears after 4 s) → failures persist with an ✕. Uploads started from inside a bucket browser go straight to that destination; uploads from the root list first show a `UploadDestinationPicker` sheet.
+`UploadStatusBar` (same file) is a floating bottom bar attached via `.safeAreaInset(edge: .bottom)`: progress while uploading → green completion message, with clipboard wording only when the destination's copy-on-upload setting is enabled (auto-clears after 4 s) → failures persist with an ✕. Uploads started from inside a bucket browser go straight to that destination, into the folder currently open (see the bucket browser section); uploads from the root list first show a `UploadDestinationPicker` sheet and use the destination's configured prefix.
 
 **Presentation rule (bug happened twice):** the status bar and every upload alert must hang off the **NavigationStack itself**, not the root list view — presentations from a covered root don't reliably appear while a bucket view is pushed.
 

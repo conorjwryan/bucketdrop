@@ -304,12 +304,12 @@ struct UploadStatusBar: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                .modifier(FrostedGlassBar())
                 .padding(.horizontal, 12)
-                .padding(.bottom, 4)
+                .padding(.bottom, 6)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }

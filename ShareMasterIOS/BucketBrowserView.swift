@@ -111,6 +111,9 @@ struct BucketBrowserView: View {
             if isLoading && isEmpty {
                 ProgressView("Loading…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Match the List's grouped background so loading doesn't
+                    // flash white before the grey file list appears.
+                    .background(Color(.systemGroupedBackground))
             } else if isShowingOfflineCache && isEmpty && parentPrefix == nil {
                 ContentUnavailableView {
                     Label {

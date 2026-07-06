@@ -145,12 +145,6 @@ enum BrowserSort: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum RecentScope: String, Codable, CaseIterable, Identifiable {
-    case perDestination
-    case combined
-    var id: String { rawValue }
-}
-
 /// macOS popover only: whether the expandable section browses the selected
 /// destination's folders or shows the flat cross-destination recent list.
 enum BrowserPaneMode: String, Codable, CaseIterable, Identifiable {
@@ -221,7 +215,6 @@ final class ConfigStore {
     private enum Keys {
         static let accounts = "config_accounts"
         static let destinations = "config_destinations"
-        static let recentScope = "config_recent_scope"
         static let pinPopover = "config_pin_popover"
         static let recentLimit = "config_recent_limit"
         static let recentsExpanded = "config_recents_expanded"
@@ -251,10 +244,6 @@ final class ConfigStore {
             if !isAdoptingCloud { pushToCloud() }
         }
     }
-    var recentScope: RecentScope = .perDestination {
-        didSet { defaults.set(recentScope.rawValue, forKey: Keys.recentScope) }
-    }
-
     /// When true the popover stays open while other apps have focus
     /// (semitransient). Default false: it closes as soon as focus moves away.
     var pinPopover: Bool = false {
@@ -367,10 +356,6 @@ final class ConfigStore {
     private init() {
         accounts = load([Account].self, key: Keys.accounts) ?? []
         destinations = load([Destination].self, key: Keys.destinations) ?? []
-        if let raw = defaults.string(forKey: Keys.recentScope),
-           let scope = RecentScope(rawValue: raw) {
-            recentScope = scope
-        }
         pinPopover = defaults.bool(forKey: Keys.pinPopover)
         let storedLimit = defaults.integer(forKey: Keys.recentLimit)
         if storedLimit > 0 { recentLimit = storedLimit }

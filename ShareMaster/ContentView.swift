@@ -64,6 +64,10 @@ struct ContentView: View {
     @State private var newFolderName = ""
     @State private var showNewFolderPrompt = false
     @State private var newFolderError: String?
+    // Browse-listing failure, shown inline in the section (not the top error
+    // bar) so it can offer permission-specific guidance and a retry.
+    @State private var browseError: String?
+    @State private var browseErrorIsPermission = false
 
     // Download/Preview state
     @State private var downloadingObjectKey: String?
@@ -371,7 +375,14 @@ struct ContentView: View {
     private var sectionTitle: String {
         if !isBrowse { return "Recent Uploads (All)" }
         guard let destination = selectedDestination else { return "Browse" }
-        return destination.name.isEmpty ? destination.bucket : destination.name
+        // At the destination's own root show its name; at the bucket root show
+        // the bucket; anywhere else show the current folder's name.
+        if browsePrefix == rootPrefix {
+            return destination.name.isEmpty ? destination.bucket : destination.name
+        }
+        if browsePrefix.isEmpty { return destination.bucket }
+        let trimmed = browsePrefix.hasSuffix("/") ? String(browsePrefix.dropLast()) : browsePrefix
+        return (trimmed as NSString).lastPathComponent
     }
 
     private var sectionHeader: some View {
@@ -507,12 +518,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private var browserContent: some View {
-        // Only once drilled below the root — the section title already names
-        // the destination at the top level.
-        if browsePrefix != rootPrefix {
+        // Shown whenever there's somewhere up to go (i.e. not at the bucket
+        // root), so you can climb above the destination's own prefix too.
+        if !browsePrefix.isEmpty {
             breadcrumbBar
         }
-        if browseFolders.isEmpty && browseItems.isEmpty && !isLoadingList {
+        if let browseError, browseFolders.isEmpty && browseItems.isEmpty {
+            browseErrorView(browseError)
+        } else if browseFolders.isEmpty && browseItems.isEmpty && !isLoadingList {
             VStack {
                 Text(browsePrefix == rootPrefix ? "No files yet" : "Empty folder")
                     .font(.caption)
@@ -535,17 +548,6 @@ struct ContentView: View {
             }
             .listStyle(.plain)
             .scrollIndicators(.never)
-            // Best-effort swipe-left to go back a level. Simultaneous so it
-            // doesn't fight the list's vertical scrolling.
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
-                    .onEnded { value in
-                        if abs(value.translation.width) > abs(value.translation.height) * 1.5,
-                           value.translation.width < -60, canGoBack {
-                            browseBack()
-                        }
-                    }
-            )
         }
     }
 
@@ -572,6 +574,37 @@ struct ContentView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 4)
         }
+    }
+
+    /// Inline listing-failure state. A permission denial gets specific guidance
+    /// (likely when browsing above the destination's own prefix); anything else
+    /// shows the underlying message. Both offer a retry.
+    private func browseErrorView(_ message: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: browseErrorIsPermission ? "lock.fill" : "exclamationmark.icloud")
+                .font(.system(size: 22))
+                .foregroundStyle(.secondary)
+            Text(browseErrorIsPermission ? "Can't list this location" : "Couldn't load")
+                .font(.subheadline.weight(.medium))
+            Text(browseErrorIsPermission
+                 ? "This account isn't allowed to list here. Check its credentials and that its IAM or bucket policy grants s3:ListBucket for this path."
+                 : message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(4)
+            HStack(spacing: 8) {
+                if canGoBack {
+                    Button("Go Up") { browseBack() }
+                        .buttonStyle(.borderless)
+                }
+                Button("Retry") { Task { await loadBrowse() } }
+                    .buttonStyle(.borderless)
+            }
+            .font(.caption)
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: Recent (All) content
@@ -899,21 +932,20 @@ struct ContentView: View {
         browseSortOverride ?? selectedDestination?.defaultBrowserSort ?? .recentFirst
     }
 
+    /// Can climb until the bucket root (""), passing through — and above — the
+    /// destination's configured prefix, exactly like the iOS up row.
     private var canGoBack: Bool {
-        browsePrefix != rootPrefix && browsePrefix.count > rootPrefix.count
+        !browsePrefix.isEmpty
     }
 
-    /// Restores the last-viewed folder for the selected destination, clamped
-    /// to at or below its root (a stored prefix from a since-changed path is
-    /// dropped back to the root).
+    /// Restores the last-viewed folder for the selected destination. Any prefix
+    /// under the same bucket is valid for the account's credentials, so it's
+    /// restored as-is; falls back to the destination root when nothing's saved.
     private func restoreBrowseLocation() {
-        let root = rootPrefix
-        if let id = selectedDestinationID,
-           let saved = config.browseLocation(for: id),
-           saved.hasPrefix(root) {
+        if let id = selectedDestinationID, let saved = config.browseLocation(for: id) {
             browsePrefix = saved
         } else {
-            browsePrefix = root
+            browsePrefix = rootPrefix
         }
     }
 
@@ -932,8 +964,7 @@ struct ContentView: View {
         let trimmed = browsePrefix.hasSuffix("/") ? String(browsePrefix.dropLast()) : browsePrefix
         var parent = (trimmed as NSString).deletingLastPathComponent
         if !parent.isEmpty { parent += "/" }
-        // Never climb above the destination's own root.
-        browsePrefix = parent.count < rootPrefix.count ? rootPrefix : parent
+        browsePrefix = parent   // "" == bucket root
         Task { await loadBrowse() }
     }
 
@@ -943,15 +974,14 @@ struct ContentView: View {
         var id: String { prefix }
     }
 
-    /// Root crumb (destination name) plus one per folder level below it.
+    /// Full path from the bucket root: bucket crumb, then one per folder level.
+    /// Jumping to any crumb (including above the destination's own prefix) is
+    /// allowed — the account's credentials cover the whole bucket.
     private var breadcrumbs: [Breadcrumb] {
-        let root = rootPrefix
-        let rootLabel = selectedDestination.map { $0.name.isEmpty ? $0.bucket : $0.name } ?? "Root"
-        var crumbs = [Breadcrumb(label: rootLabel, prefix: root)]
-        guard browsePrefix.hasPrefix(root), browsePrefix.count > root.count else { return crumbs }
-        let remainder = String(browsePrefix.dropFirst(root.count))
-        let parts = remainder.split(separator: "/", omittingEmptySubsequences: true)
-        var acc = root
+        let bucketLabel = selectedDestination?.bucket ?? "Bucket"
+        var crumbs = [Breadcrumb(label: bucketLabel, prefix: "")]
+        let parts = browsePrefix.split(separator: "/", omittingEmptySubsequences: true)
+        var acc = ""
         for part in parts {
             acc += part + "/"
             crumbs.append(Breadcrumb(label: String(part), prefix: acc))
@@ -986,9 +1016,14 @@ struct ContentView: View {
             let (folders, objects) = Self.sortedBrowse(folders: allFolders, objects: allObjects, by: sort)
             browseFolders = folders
             browseItems = await resolveItems(objects, destination: destination, config: cfg)
-            errorMessage = nil
+            browseError = nil
+            browseErrorIsPermission = false
         } catch {
-            errorMessage = error.localizedDescription
+            // Surface listing failures inside the section (with permission
+            // guidance) rather than the top bar — browsing arbitrary bucket
+            // levels can legitimately hit ListBucket denials.
+            browseErrorIsPermission = (error as? S3Service.S3Error)?.isPermissionIssue ?? false
+            browseError = error.localizedDescription
             browseFolders = []; browseItems = []
         }
     }

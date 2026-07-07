@@ -378,18 +378,22 @@ struct BucketBrowserView: View {
                 offlineBanner
             }
         }
-        // Attached once to the List (not per-row inside the ForEach): a
-        // per-row dialog is torn down whenever the list re-renders — which
-        // the downloads/network observables do constantly — so it flashed
-        // open and vanished before you could confirm. Presenting off the
-        // optional keeps a single stable dialog for the whole list.
-        .confirmationDialog(
-            Text(pendingDelete.map { "Delete \u{201C}\($0.filename)\u{201D}?" } ?? ""),
+        // These use `.alert`, not `.confirmationDialog`, and attach once to
+        // the List (not per-row inside the ForEach). A per-row dialog is torn
+        // down whenever the list re-renders — which the downloads/network
+        // observables do constantly — so it flashed open and vanished before
+        // you could confirm. But at List level a `confirmationDialog` renders
+        // as a glass popover whose beak anchors to the container's centre,
+        // pointing at an unrelated row and clipping the top of the list. An
+        // alert is a centred modal with no anchor, so it can't mis-point or
+        // clip; the title/message read the presented item so it still names
+        // the exact file and bucket.
+        .alert(
+            "Delete \u{201C}\(pendingDelete?.filename ?? "")\u{201D}?",
             isPresented: Binding(
                 get: { pendingDelete != nil },
                 set: { if !$0 { pendingDelete = nil } }
             ),
-            titleVisibility: .visible,
             presenting: pendingDelete
         ) { object in
             Button("Delete", role: .destructive) {
@@ -400,13 +404,12 @@ struct BucketBrowserView: View {
         } message: { object in
             Text(deleteMessage(for: object))
         }
-        .confirmationDialog(
-            Text(pendingRemoveDownload.map { "Remove downloaded copy of \u{201C}\($0.filename)\u{201D}?" } ?? ""),
+        .alert(
+            "Remove downloaded copy of \u{201C}\(pendingRemoveDownload?.filename ?? "")\u{201D}?",
             isPresented: Binding(
                 get: { pendingRemoveDownload != nil },
                 set: { if !$0 { pendingRemoveDownload = nil } }
             ),
-            titleVisibility: .visible,
             presenting: pendingRemoveDownload
         ) { object in
             Button("Remove Download", role: .destructive) {

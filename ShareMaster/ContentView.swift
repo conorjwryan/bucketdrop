@@ -55,6 +55,12 @@ struct ContentView: View {
     @State private var recentItems: [RecentItem] = []
     @State private var isLoadingList = false
 
+    // Redesign UI state: which row is selected (drives the blue highlight and
+    // the inline action buttons) and whether the Destinations sidebar is
+    // collapsed to reclaim width for the file table.
+    @State private var selectedItemID: UUID?
+    @State private var sidebarCollapsed = false
+
     // Browser state (Browse mode) — folder navigation within the selected
     // destination. browsePrefix is the full key prefix currently shown.
     @State private var browsePrefix: String = ""
@@ -92,19 +98,26 @@ struct ContentView: View {
             if destinations.isEmpty {
                 notConfiguredView
             } else {
+                breadcrumbHeaderBar
+                Divider()
                 HStack(spacing: 0) {
-                    sidebar
-                        .frame(width: 168)
-                    Divider()
+                    if !sidebarCollapsed {
+                        sidebar
+                            .frame(width: 190)
+                        Divider()
+                    }
                     detail
                 }
             }
         }
-        .frame(width: 560, height: config.recentsExpanded ? 460 : 212, alignment: .top)
+        .frame(width: 780, height: 580, alignment: .top)
         .task {
             // Popover content is rebuilt on each open, so this also picks up
             // config changes synced from other devices via iCloud Keychain.
             config.revealHidden = false
+            // The redesign always shows the file table (no collapsed state), so
+            // keep the loading gate open.
+            config.recentsExpanded = true
             config.refreshFromCloud()
             if selectedDestinationID == nil {
                 let remembered = config.lastSelectedDestinationID
@@ -185,36 +198,123 @@ struct ContentView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
+            // Generic cloud-upload mark (per request, the real logo comes later).
+            Image(systemName: "cloud.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(Color.accentColor)
+                .overlay(
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .offset(y: 1)
+                )
             // The word mark doubles as the reveal switch for hidden
             // destinations; deliberately gives no visual hint.
             Text("ShareMaster")
-                .font(.headline)
+                .font(.title3.weight(.semibold))
                 .onTapGesture {
                     withAnimation { config.revealHidden.toggle() }
                 }
+
             Spacer()
-            HStack(spacing: 12) {
-                Button {
+
+            HStack(spacing: 8) {
+                HeaderIconButton(systemName: "square.and.arrow.up", help: "Upload files") {
+                    if let destination = selectedDestination, !isUploading {
+                        openFilePicker(destination, keyPrefix: uploadKeyPrefix)
+                    }
+                }
+                .disabled(selectedDestination == nil || isUploading)
+
+                HeaderIconButton(systemName: "folder.badge.plus", help: "New folder") {
+                    newFolderName = ""
+                    showNewFolderPrompt = true
+                }
+                .disabled(!isBrowse || selectedDestination == nil)
+
+                HeaderIconButton(
+                    systemName: "arrow.clockwise",
+                    help: "Refresh",
+                    isBusy: isLoadingList
+                ) {
+                    Task { await reloadExpanded() }
+                }
+
+                HeaderIconButton(systemName: "gearshape", help: "Settings") {
                     openSettings()          // closes popover + activates app
                     openNativeSettings()    // opens the native Settings scene
-                } label: {
-                    Image(systemName: "gear")
                 }
-                .buttonStyle(.borderless)
-                .help("Settings")
-
-                Button {
-                    NSApp.terminate(nil)
-                } label: {
-                    Image(systemName: "power")
-                }
-                .buttonStyle(.borderless)
-                .help("Quit ShareMaster")
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .contextMenu {
+            Button("Quit ShareMaster") { NSApp.terminate(nil) }
+        }
+    }
+
+    // MARK: - Breadcrumb bar
+
+    /// Full-width path bar under the header. A home button jumps to the bucket
+    /// root; the remaining crumbs are the folders below it. In Recent (All) mode
+    /// there's no path, so it shows a static label instead.
+    private var breadcrumbHeaderBar: some View {
+        let crumbs = isBrowse ? breadcrumbs : []
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) {
+                Button {
+                    navigate(to: crumbs.first?.prefix ?? "")
+                } label: {
+                    Image(systemName: "house.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Bucket root")
+
+                if isBrowse {
+                    ForEach(crumbs.dropFirst()) { crumb in
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                        Button {
+                            navigate(to: crumb.prefix)
+                        } label: {
+                            Text(crumb.label)
+                                .font(.system(size: 13, weight: crumb.prefix == browsePrefix ? .semibold : .regular))
+                                .foregroundStyle(crumb.prefix == browsePrefix ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    Text("Recent Uploads")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+        }
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    /// Navigates the browser to an absolute key prefix (used by breadcrumbs).
+    private func navigate(to prefix: String) {
+        guard isBrowse, prefix != browsePrefix else { return }
+        browsePrefix = prefix
+        Task { await loadBrowse() }
     }
 
     private var notConfiguredView: some View {
@@ -240,8 +340,25 @@ struct ContentView: View {
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        ScrollViewReader { proxy in
-            sidebarList
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Destinations")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(destinations) { destination in
+                            destinationRow(destination)
+                                .id(destination.id)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
                 .onChange(of: dropTargetID) { _, targetID in
                     // While a drag hovers a row near the visible edge, nudge the
                     // list so its neighbours scroll into view — lets a drag walk
@@ -257,123 +374,86 @@ struct ContentView: View {
                         }
                     }
                 }
-        }
-    }
-
-    private var sidebarList: some View {
-        List(selection: $selectedDestinationID) {
-            ForEach(destinations) { destination in
-                DestinationRow(
-                    destination: destination,
-                    accountName: config.account(id: destination.accountId)?.name ?? "—",
-                    isDropTarget: dropTargetID == destination.id
-                )
-                .tag(destination.id)
-                .contextMenu {
-                    // The editor doesn't fit inside the popover, so the draft
-                    // is handed to the Settings window, which opens its
-                    // Destinations editor pre-filled with it.
-                    Button("Duplicate…") {
-                        config.pendingDuplicate = config.duplicateDraft(of: destination)
-                        openSettings()
-                        openNativeSettings()
-                    }
-                }
-                .onDrop(of: [.fileURL, .image], isTargeted: Binding(
-                    get: { dropTargetID == destination.id },
-                    set: { targeted in
-                        if targeted {
-                            dropTargetID = destination.id
-                        } else if dropTargetID == destination.id {
-                            dropTargetID = nil
-                        }
-                    }
-                )) { providers in
-                    guard !isUploading else { return false }
-                    NSApp.activate(ignoringOtherApps: true)
-                    // Move focus to the destination that received the drop so the
-                    // right side reflects where the files went.
-                    selectedDestinationID = destination.id
-                    handleDrop(providers, to: destination)
-                    return true
-                }
-                .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
             }
+
+            Spacer(minLength: 0)
+
+            Divider()
+            HStack {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { sidebarCollapsed = true }
+                } label: {
+                    Image(systemName: "chevron.left.2")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Hide destinations")
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
     }
 
-    // MARK: - Detail
+    private func destinationRow(_ destination: Destination) -> some View {
+        let isSelected = selectedDestinationID == destination.id
+        let isDrop = dropTargetID == destination.id
+        return DestinationRow(destination: destination, isSelected: isSelected, isDropTarget: isDrop)
+            .contentShape(Rectangle())
+            .onTapGesture { selectedDestinationID = destination.id }
+            .contextMenu {
+                // The editor doesn't fit inside the popover, so the draft
+                // is handed to the Settings window, which opens its
+                // Destinations editor pre-filled with it.
+                Button("Duplicate…") {
+                    config.pendingDuplicate = config.duplicateDraft(of: destination)
+                    openSettings()
+                    openNativeSettings()
+                }
+            }
+            .onDrop(of: [.fileURL, .image], isTargeted: Binding(
+                get: { dropTargetID == destination.id },
+                set: { targeted in
+                    if targeted {
+                        dropTargetID = destination.id
+                    } else if dropTargetID == destination.id {
+                        dropTargetID = nil
+                    }
+                }
+            )) { providers in
+                guard !isUploading else { return false }
+                NSApp.activate(ignoringOtherApps: true)
+                // Move focus to the destination that received the drop so the
+                // right side reflects where the files went.
+                selectedDestinationID = destination.id
+                handleDrop(providers, to: destination)
+                return true
+            }
+    }
+
+    // MARK: - Detail (file table)
+
+    private var isBrowse: Bool { config.browserPaneMode == .browse }
 
     @ViewBuilder
     private var detail: some View {
         VStack(spacing: 0) {
             if let destination = selectedDestination {
-                DropZoneView(
-                    isTargeted: $isTargeted,
-                    isUploading: isUploading,
-                    uploadTasks: uploadTasks
-                )
-                .onTapGesture {
-                    if !isUploading { openFilePicker(destination, keyPrefix: uploadKeyPrefix) }
-                }
-                .onDrop(of: [.fileURL, .image], isTargeted: $isTargeted) { providers in
-                    guard !isUploading else { return false }
-                    NSApp.activate(ignoringOtherApps: true)
-                    handleDrop(providers, to: destination, keyPrefix: uploadKeyPrefix)
-                    return true
-                }
-                .padding(16)
-
+                columnHeader
+                Divider()
+                fileList
                 if let error = errorMessage {
-                    HStack {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.red)
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Spacer()
-                        Button {
-                            errorMessage = nil
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
+                    errorBar(error)
                 }
-
-                expandableSection
-
-                // Pin everything above to the top so collapsing/expanding the
-                // section never shifts the header or drop zone.
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    // MARK: - Expandable section (Browse / Recent All)
-
-    private var isBrowse: Bool { config.browserPaneMode == .browse }
-
-    private var expandableSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sectionHeader
-            if config.recentsExpanded {
-                if isBrowse {
-                    browserContent
-                } else {
-                    recentAllContent
-                }
+                dropZone(for: destination)
             }
         }
     }
 
     private var sectionTitle: String {
-        if !isBrowse { return "Recent Uploads (All)" }
+        if !isBrowse { return "Recent Uploads" }
         guard let destination = selectedDestination else { return "Browse" }
         // At the destination's own root show its name; at the bucket root show
         // the bucket; anywhere else show the current folder's name.
@@ -385,83 +465,74 @@ struct ContentView: View {
         return (trimmed as NSString).lastPathComponent
     }
 
-    private var sectionHeader: some View {
-        HStack(spacing: 8) {
-            // Collapsible: content only loads (and list requests only fire)
-            // while this section is expanded.
-            Button {
-                config.recentsExpanded.toggle()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .rotationEffect(.degrees(config.recentsExpanded ? 90 : 0))
-                        .animation(.easeInOut(duration: 0.15), value: config.recentsExpanded)
-                    Text(sectionTitle)
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+    // MARK: Column header
+
+    private var columnHeader: some View {
+        HStack(spacing: 0) {
+            if sidebarCollapsed {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { sidebarCollapsed = false }
+                } label: {
+                    Image(systemName: "sidebar.left").foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .help("Show destinations")
+                .padding(.trailing, 10)
             }
-            .buttonStyle(.borderless)
 
-            Spacer(minLength: 4)
-
-            if config.recentsExpanded {
-                // Back one folder level (Browse mode, below the root only).
-                if isBrowse && canGoBack {
-                    Button {
-                        browseBack()
-                    } label: {
-                        Image(systemName: "chevron.backward")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Back")
+            if isBrowse && canGoBack {
+                Button { browseBack() } label: {
+                    Image(systemName: "chevron.backward").foregroundStyle(.secondary)
                 }
-
-                sortMenu
-                if isBrowse { browseActionsMenu }
-                modeToggle
-
-                if isLoadingList {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button {
-                        Task { await reloadExpanded() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Refresh")
-                }
+                .buttonStyle(.plain)
+                .help("Back")
+                .padding(.trailing, 10)
             }
+
+            columnSortButton("Name", sorts: [.nameAscending, .nameDescending])
+                .frame(maxWidth: .infinity, alignment: .leading)
+            columnSortButton("Date", sorts: [.recentFirst])
+                .frame(width: Col.date, alignment: .leading)
+            Text("Size")
+                .frame(width: Col.size, alignment: .trailing)
+            optionsMenu
+                .frame(width: Col.actions, alignment: .center)
         }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(.secondary)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
     }
 
-    /// Browse ↔ Recent (All) switch.
-    private var modeToggle: some View {
-        Menu {
-            Picker("View", selection: Binding(
-                get: { config.browserPaneMode },
-                set: { config.browserPaneMode = $0 }
-            )) {
-                Label("Browse Folders", systemImage: "folder").tag(BrowserPaneMode.browse)
-                Label("Recent (All)", systemImage: "clock").tag(BrowserPaneMode.recentAll)
+    /// A clickable column header that applies one of the given sorts and shows
+    /// the active-direction caret. The Name column toggles A↔Z.
+    private func columnSortButton(_ title: String, sorts: [BrowserSort]) -> some View {
+        let active = sorts.contains(browseSort)
+        return Button {
+            if sorts == [.nameAscending, .nameDescending] {
+                browseSortOverride = (browseSort == .nameAscending) ? .nameDescending : .nameAscending
+            } else if let first = sorts.first {
+                browseSortOverride = first
             }
-            .pickerStyle(.inline)
         } label: {
-            Image(systemName: isBrowse ? "folder" : "clock")
+            HStack(spacing: 3) {
+                Text(title)
+                    .foregroundStyle(active ? Color.primary : Color.secondary)
+                if active {
+                    Image(systemName: browseSort == .nameDescending ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Switch between folder browsing and recent uploads")
+        .buttonStyle(.plain)
+        .disabled(!isBrowse)
     }
 
-    private var sortMenu: some View {
+    /// Hamburger menu at the right of the column header: sort, view mode, and
+    /// (in Browse) the folder / destination actions.
+    private var optionsMenu: some View {
         Menu {
             Picker("Sort By", selection: Binding(
                 get: { browseSort },
@@ -472,108 +543,160 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.inline)
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Sort")
-    }
-
-    /// "…" menu: new folder here, plus the destination-here / settings actions.
-    private var browseActionsMenu: some View {
-        Menu {
-            Button {
-                newFolderName = ""
-                showNewFolderPrompt = true
-            } label: {
-                Label("New Folder", systemImage: "folder.badge.plus")
-            }
             Divider()
-            if let existing = destinationAtCurrentPrefix {
+            Picker("View", selection: Binding(
+                get: { config.browserPaneMode },
+                set: { config.browserPaneMode = $0 }
+            )) {
+                Label("Browse Folders", systemImage: "folder").tag(BrowserPaneMode.browse)
+                Label("Recent (All)", systemImage: "clock").tag(BrowserPaneMode.recentAll)
+            }
+            .pickerStyle(.inline)
+            if isBrowse {
+                Divider()
                 Button {
-                    config.pendingDuplicate = existing   // opens editor pre-filled
-                    openSettings()
-                    openNativeSettings()
+                    newFolderName = ""
+                    showNewFolderPrompt = true
                 } label: {
-                    Label("View Destination Settings", systemImage: "slider.horizontal.3")
+                    Label("New Folder", systemImage: "folder.badge.plus")
                 }
-            } else {
-                Button {
-                    createDestinationHere()
-                } label: {
-                    Label("New Destination Here", systemImage: "externaldrive.badge.plus")
+                if let existing = destinationAtCurrentPrefix {
+                    Button {
+                        config.pendingDuplicate = existing   // opens editor pre-filled
+                        openSettings()
+                        openNativeSettings()
+                    } label: {
+                        Label("View Destination Settings", systemImage: "slider.horizontal.3")
+                    }
+                } else {
+                    Button {
+                        createDestinationHere()
+                    } label: {
+                        Label("New Destination Here", systemImage: "externaldrive.badge.plus")
+                    }
                 }
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "line.3.horizontal").foregroundStyle(.secondary)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .help("View options")
     }
 
-    // MARK: Browse content
+    // MARK: File list
 
     @ViewBuilder
-    private var browserContent: some View {
-        // Shown whenever there's somewhere up to go (i.e. not at the bucket
-        // root), so you can climb above the destination's own prefix too.
-        if !browsePrefix.isEmpty {
-            breadcrumbBar
+    private var fileList: some View {
+        if isBrowse {
+            browseList
+        } else {
+            recentAllList
         }
+    }
+
+    @ViewBuilder
+    private var browseList: some View {
         if let browseError, browseFolders.isEmpty && browseItems.isEmpty {
             browseErrorView(browseError)
         } else if browseFolders.isEmpty && browseItems.isEmpty && !isLoadingList {
-            VStack {
-                Text(browsePrefix == rootPrefix ? "No files yet" : "Empty folder")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            emptyState(browsePrefix == rootPrefix ? "No files yet" : "Empty folder")
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(browseFolders) { folder in
+                        MacFolderRow(name: folderDisplayName(folder))
+                            .onTapGesture { drillInto(folder) }
+                        rowDivider
+                    }
+                    ForEach(browseItems) { item in
+                        fileRow(for: item, badge: nil)
+                            .id(item.object.id)
+                        rowDivider
+                    }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List {
-                ForEach(browseFolders) { folder in
-                    MacFolderRow(name: folderDisplayName(folder))
-                        .contentShape(Rectangle())
-                        .onTapGesture { drillInto(folder) }
-                        .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
-                }
-                ForEach(browseItems) { item in
-                    fileRow(for: item, badge: nil)
-                        .id(item.object.id)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
-                }
-            }
-            .listStyle(.plain)
-            .scrollIndicators(.never)
         }
     }
 
-    private var breadcrumbBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(breadcrumbs) { crumb in
-                    Button {
-                        if crumb.prefix != browsePrefix { browsePrefix = crumb.prefix; Task { await loadBrowse() } }
-                    } label: {
-                        Text(crumb.label)
-                            .font(.caption)
-                            .foregroundStyle(crumb.prefix == browsePrefix ? Color.primary : Color.accentColor)
-                            .lineLimit(1)
+    @ViewBuilder
+    private var recentAllList: some View {
+        if recentItems.isEmpty && !isLoadingList {
+            emptyState("No files yet")
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(recentItems) { item in
+                            fileRow(for: item, badge: item.destination.name)
+                                .id(item.object.id)
+                            rowDivider
+                        }
                     }
-                    .buttonStyle(.borderless)
-                    if crumb.prefix != breadcrumbs.last?.prefix {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onChange(of: recentItems.first?.id) { _, newValue in
+                    guard let newValue else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(newValue, anchor: .top)
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
         }
+    }
+
+    private var rowDivider: some View {
+        Divider().padding(.leading, 58).opacity(0.5)
+    }
+
+    private func emptyState(_ text: String) -> some View {
+        VStack {
+            Text(text).font(.callout).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: Drop zone + error
+
+    private func dropZone(for destination: Destination) -> some View {
+        DropZoneView(
+            isTargeted: $isTargeted,
+            isUploading: isUploading,
+            uploadTasks: uploadTasks,
+            targetName: sectionTitle
+        )
+        .onTapGesture {
+            if !isUploading { openFilePicker(destination, keyPrefix: uploadKeyPrefix) }
+        }
+        .onDrop(of: [.fileURL, .image], isTargeted: $isTargeted) { providers in
+            guard !isUploading else { return false }
+            NSApp.activate(ignoringOtherApps: true)
+            handleDrop(providers, to: destination, keyPrefix: uploadKeyPrefix)
+            return true
+        }
+        .padding(16)
+    }
+
+    private func errorBar(_ error: String) -> some View {
+        HStack {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.red)
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
+            Spacer()
+            Button {
+                errorMessage = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
     }
 
     /// Inline listing-failure state. A permission denial gets specific guidance
@@ -607,45 +730,15 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: Recent (All) content
-
-    @ViewBuilder
-    private var recentAllContent: some View {
-        if recentItems.isEmpty && !isLoadingList {
-            VStack {
-                Text("No files yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollViewReader { proxy in
-                List {
-                    ForEach(recentItems) { item in
-                        fileRow(for: item, badge: item.destination.name)
-                            .id(item.object.id)
-                            .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
-                    }
-                }
-                .listStyle(.plain)
-                .scrollIndicators(.never)
-                .onChange(of: recentItems.first?.id) { _, newValue in
-                    guard let newValue else { return }
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(newValue, anchor: .top)
-                    }
-                }
-            }
-        }
-    }
-
     private func fileRow(for item: RecentItem, badge: String?) -> some View {
         FileRowView(
             object: item.object,
             previewURL: previewURL(for: item),
             badge: badge,
+            isSelected: selectedItemID == item.object.id,
             isDownloading: downloadingObjectKey == item.object.key,
-            downloadProgress: downloadingObjectKey == item.object.key ? downloadProgress : 0
+            downloadProgress: downloadingObjectKey == item.object.key ? downloadProgress : 0,
+            onSelect: { selectedItemID = item.object.id }
         ) {
             copyToClipboard(item)
         } onDelete: {
@@ -1278,35 +1371,106 @@ struct ContentView: View {
     private static var quickLookCoordinator: QuickLookCoordinator?
 }
 
+// MARK: - Header action button
+
+/// A bordered, rounded icon button used in the header action row.
+struct HeaderIconButton: View {
+    let systemName: String
+    let help: String
+    var isBusy: Bool = false
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                if isBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: systemName)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.primary)
+                }
+            }
+            .frame(width: 34, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(help)
+    }
+}
+
+// MARK: - Shared table layout
+
+/// Fixed column widths so the header, folder rows and file rows all line up.
+enum Col {
+    static let date: CGFloat = 132
+    static let size: CGFloat = 66
+    static let actions: CGFloat = 34
+}
+
+/// A stable icon + colour for a destination, derived from its id so the same
+/// destination always looks the same without needing a stored icon field.
+func destinationIconStyle(_ destination: Destination) -> (symbol: String, color: Color) {
+    let symbols = ["folder.fill", "camera.fill", "cylinder.split.1x2.fill",
+                   "archivebox.fill", "photo.fill", "tray.full.fill",
+                   "shippingbox.fill", "doc.fill", "square.stack.3d.up.fill"]
+    let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .teal, .red, .indigo]
+    let bytes = withUnsafeBytes(of: destination.id.uuid) { Array($0) }
+    let sum = bytes.reduce(0) { $0 + Int($1) }
+    return (symbols[sum % symbols.count], colors[(sum / 7) % colors.count])
+}
+
 // MARK: - Destination sidebar row
 
 struct DestinationRow: View {
     let destination: Destination
-    let accountName: String
+    var isSelected: Bool = false
     var isDropTarget: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let style = destinationIconStyle(destination)
+        return HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(style.color.gradient)
+                Image(systemName: style.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 26, height: 26)
+
             Text(destination.name.isEmpty ? "Untitled" : destination.name)
-                .font(.system(.subheadline).weight(.medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(isDropTarget ? .white : .primary)
                 .lineLimit(1)
-            Text(subtitle)
-                .font(.caption2)
-                .foregroundStyle(isDropTarget ? Color.white.opacity(0.85) : Color.secondary)
-                .lineLimit(1)
                 .truncationMode(.middle)
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            // Mimics the sidebar selection pill while a drag hovers over the row.
-            RoundedRectangle(cornerRadius: 5)
-                .fill(isDropTarget ? Color.accentColor : Color.clear)
-                .padding(.horizontal, -7)
-                .padding(.vertical, -3)
+            RoundedRectangle(cornerRadius: 7)
+                .fill(rowBackground)
         )
+        .help(subtitle)
         .animation(.easeInOut(duration: 0.1), value: isDropTarget)
+    }
+
+    private var rowBackground: Color {
+        if isDropTarget { return Color.accentColor }
+        if isSelected { return Color.primary.opacity(0.08) }
+        return .clear
     }
 
     private var subtitle: String {
@@ -1319,30 +1483,42 @@ struct DestinationRow: View {
 
 struct MacFolderRow: View {
     let name: String
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(nsColor: .separatorColor).opacity(0.3))
-                Image(systemName: "folder")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 0) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor.opacity(0.12))
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .frame(width: 32, height: 32)
+
+                Text(name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
             }
-            .frame(width: 32, height: 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(name)
-                .font(.system(.subheadline).weight(.medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            Spacer(minLength: 8)
-
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            Text("—")
+                .frame(width: Col.date, alignment: .leading)
+                .foregroundStyle(.secondary)
+            Text("—")
+                .frame(width: Col.size, alignment: .trailing)
+                .foregroundStyle(.secondary)
+            Spacer().frame(width: Col.actions)
         }
-        .padding(.vertical, 6)
+        .font(.system(size: 12))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+        .background(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -1350,6 +1526,7 @@ struct DropZoneView: View {
     @Binding var isTargeted: Bool
     let isUploading: Bool
     let uploadTasks: [UploadTask]
+    var targetName: String = ""
 
     private var completedCount: Int {
         uploadTasks.filter {
@@ -1419,27 +1596,34 @@ struct DropZoneView: View {
                     }
                 }
             } else {
-                Image(systemName: isTargeted ? "arrow.down.circle.fill" : "arrow.up.circle")
-                    .font(.system(size: 24))
-                    .foregroundStyle(isTargeted ? Color.accentColor : .secondary)
-                Text(isTargeted ? "Drop to upload" : "Drop files here or click to select")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Image(systemName: isTargeted ? "arrow.down.circle.fill" : "icloud.and.arrow.up")
+                        .font(.system(size: 20))
+                        .foregroundStyle(isTargeted ? Color.accentColor : .secondary)
+                    Text(isTargeted
+                         ? "Drop to upload"
+                         : (targetName.isEmpty ? "Drop here or click to upload" : "Drop here to upload to \(targetName)"))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 100)
+        .frame(height: 66)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isTargeted ? Color.accentColor.opacity(0.1) : Color(nsColor: .quaternaryLabelColor).opacity(0.5))
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isTargeted ? Color.accentColor.opacity(0.08) : Color.clear)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
                     isTargeted ? Color.accentColor : Color(nsColor: .separatorColor),
-                    lineWidth: isTargeted ? 2 : 1
+                    style: StrokeStyle(lineWidth: isTargeted ? 2 : 1.5, dash: [6, 4])
                 )
         )
+        .contentShape(Rectangle())
         .animation(.easeInOut(duration: 0.15), value: isTargeted)
     }
 }
@@ -1557,8 +1741,10 @@ struct FileRowView: View {
     let object: S3Object
     let previewURL: URL?
     var badge: String? = nil
+    var isSelected: Bool = false
     let isDownloading: Bool
     let downloadProgress: Double
+    let onSelect: () -> Void
     let onCopy: () -> Void
     let onDelete: () async -> Void
     /// The Bool is true when the user option-clicked (choose location).
@@ -1569,125 +1755,190 @@ struct FileRowView: View {
     @State private var isDeleting = false
     @State private var isCopied = false
 
+    private var primaryText: Color { isSelected ? .white : .primary }
+    private var secondaryText: Color { isSelected ? Color.white.opacity(0.85) : .secondary }
+    private var showActions: Bool { isHovered || isSelected || isDeleting || isDownloading }
+
     var body: some View {
-        HStack(spacing: 10) {
-            if let previewURL {
-                CachedAsyncImage(url: previewURL) { state in
-                    switch state {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        Image(systemName: "photo")
-                            .foregroundStyle(.secondary)
-                    case .loading:
-                        ProgressView()
-                            .controlSize(.small)
+        HStack(spacing: 0) {
+            // Name column
+            HStack(spacing: 10) {
+                thumbnail
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(object.filename)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if isDownloading {
+                        ProgressView(value: downloadProgress)
+                            .progressViewStyle(ActiveProgressViewStyle(height: 5))
+                            .frame(maxWidth: 160)
+                    } else if let badge {
+                        Text(badge)
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background((isSelected ? Color.white.opacity(0.25) : Color.accentColor.opacity(0.15)), in: Capsule())
+                            .foregroundStyle(isSelected ? Color.white : Color.accentColor)
                     }
                 }
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
-                )
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(nsColor: .separatorColor).opacity(0.3))
-                    Image(systemName: iconForFile(object.filename))
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(width: 32, height: 32)
+                Spacer(minLength: 8)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(object.filename)
-                    .font(.system(.subheadline).weight(.medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                if isDownloading {
-                    ProgressView(value: downloadProgress)
-                        .progressViewStyle(ActiveProgressViewStyle(height: 6))
-                        .padding(.top, 2)
-                } else {
-                    HStack(spacing: 6) {
-                        if let badge {
-                            Text(badge)
-                                .font(.caption2)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.15), in: Capsule())
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        Text(formatSize(object.size))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            HStack(spacing: 4) {
-                Button {
-                    if !isDeleting && !isDownloading {
-                        onCopy()
-                        Task { @MainActor in
-                            withAnimation(.easeInOut(duration: 0.15)) { isCopied = true }
-                            try? await Task.sleep(for: .seconds(1))
-                            withAnimation(.easeInOut(duration: 0.15)) { isCopied = false }
-                        }
-                    }
-                } label: {
-                    Image(systemName: isCopied ? "checkmark.circle.fill" : "link")
-                        .foregroundStyle(isCopied ? Color.green : Color.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Copy link")
-                .disabled(isDeleting || isDownloading)
-
-                Button {
-                    let choosePanel = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
-                    Task { await onDownload(choosePanel) }
-                } label: {
-                    Image(systemName: "arrow.down.circle")
-                        .foregroundStyle(Color.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Download (⌥-click to choose location)")
-                .disabled(isDeleting || isDownloading)
-
-                Button {
-                    Task {
-                        isDeleting = true
-                        await onDelete()
-                        isDeleting = false
-                    }
-                } label: {
-                    if isDeleting {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "trash")
-                            .foregroundStyle(Color(nsColor: .systemRed))
-                    }
-                }
-                .buttonStyle(.borderless)
-                .help("Delete")
-                .disabled(isDeleting || isDownloading)
-            }
-            .opacity(isHovered || isDeleting || isDownloading ? 1 : 0)
+            Text(dateString)
+                .frame(width: Col.date, alignment: .leading)
+                .foregroundStyle(secondaryText)
+            Text(formatSize(object.size))
+                .frame(width: Col.size, alignment: .trailing)
+                .foregroundStyle(secondaryText)
+            Spacer().frame(width: Col.actions)
         }
-        .padding(.vertical, 6)
+        .font(.system(size: 12))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(rowBackground)
+        .overlay(alignment: .trailing) { actionCluster }
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
-        .onTapGesture(count: 2) {
-            if !isDownloading { onPreview() }
+        .onTapGesture(count: 2) { if !isDownloading { onPreview() } }
+        .onTapGesture { onSelect() }
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let previewURL {
+            CachedAsyncImage(url: previewURL) { state in
+                switch state {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .failure:
+                    Image(systemName: "photo").foregroundStyle(.secondary)
+                case .loading:
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(width: 32, height: 32)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
+            )
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(fileTint.opacity(0.12))
+                Image(systemName: iconForFile(object.filename))
+                    .font(.system(size: 14))
+                    .foregroundStyle(fileTint)
+            }
+            .frame(width: 32, height: 32)
         }
+    }
+
+    @ViewBuilder
+    private var rowBackground: some View {
+        if isSelected {
+            Color.accentColor
+        } else if isHovered {
+            Color.primary.opacity(0.05)
+        } else {
+            Color.clear
+        }
+    }
+
+    private var actionCluster: some View {
+        HStack(spacing: 2) {
+            actionButton(isCopied ? "checkmark.circle.fill" : "link",
+                         help: "Copy Link",
+                         tint: isCopied ? Color(nsColor: .systemGreen) : nil) {
+                if !isDeleting && !isDownloading {
+                    onCopy()
+                    Task { @MainActor in
+                        withAnimation(.easeInOut(duration: 0.15)) { isCopied = true }
+                        try? await Task.sleep(for: .seconds(1))
+                        withAnimation(.easeInOut(duration: 0.15)) { isCopied = false }
+                    }
+                }
+            }
+            actionButton("arrow.down.to.line", help: "Download (⌥-click to choose location)") {
+                let choosePanel = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+                Task { await onDownload(choosePanel) }
+            }
+            actionButton("eye", help: "Preview") {
+                if !isDownloading { onPreview() }
+            }
+            Button {
+                Task {
+                    isDeleting = true
+                    await onDelete()
+                    isDeleting = false
+                }
+            } label: {
+                Group {
+                    if isDeleting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "trash")
+                            .foregroundStyle(isSelected ? Color.white : Color(nsColor: .systemRed))
+                    }
+                }
+                .frame(width: 26, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Delete")
+            .disabled(isDeleting || isDownloading)
+        }
+        .padding(.trailing, 12)
+        .padding(.leading, 24)
+        .padding(.vertical, 3)
+        // Opaque, left-faded backing so the buttons cleanly cover the Size
+        // column behind them instead of letting the text bleed through.
+        .background(clusterBacking)
+        .opacity(showActions ? 1 : 0)
+        .allowsHitTesting(showActions)
+    }
+
+    private var clusterBacking: some View {
+        let base = isSelected ? Color.accentColor : Color(nsColor: .windowBackgroundColor)
+        return LinearGradient(
+            stops: [
+                .init(color: base.opacity(0), location: 0),
+                .init(color: base, location: 0.35),
+                .init(color: base, location: 1)
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    private func actionButton(_ symbol: String, help: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .foregroundStyle(tint ?? (isSelected ? Color.white : Color.secondary))
+                .frame(width: 26, height: 24)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .disabled(isDeleting || isDownloading)
+    }
+
+    private var fileTint: Color {
+        switch (object.filename as NSString).pathExtension.lowercased() {
+        case "jpg", "jpeg", "png", "gif", "webp", "svg": return .blue
+        case "mp4", "mov", "avi": return .purple
+        case "mp3", "wav", "m4a": return .pink
+        case "pdf": return .red
+        case "zip", "rar", "7z": return .orange
+        default: return .secondary
+        }
+    }
+
+    private var dateString: String {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy h:mm a"
+        return f.string(from: object.lastModified)
     }
 
     private func iconForFile(_ filename: String) -> String {

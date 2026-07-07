@@ -204,7 +204,9 @@ extension S3Config {
 /// template image in the asset catalog. Outline is line-art; solid is filled
 /// with the internal edges carved back out as negative space.
 enum MenuBarIconStyle: String, CaseIterable, Identifiable {
-    case planeOutline, planeFill, boxOutline, boxFill
+    // Order here drives the dropdown order: solid plane (default), solid box,
+    // then the lighter outlines.
+    case planeFill, boxFill, planeOutline, boxOutline
 
     var id: String { rawValue }
 
@@ -323,7 +325,7 @@ final class ConfigStore {
     /// macOS-only (not synced): which glyph/treatment the menu-bar status item
     /// shows. Changing it posts `.menuBarIconStyleChanged` so the item updates
     /// without a relaunch.
-    var menuBarIconStyle: MenuBarIconStyle = .planeOutline {
+    var menuBarIconStyle: MenuBarIconStyle = .planeFill {
         didSet {
             defaults.set(menuBarIconStyle.rawValue, forKey: Keys.menuBarIconStyle)
             NotificationCenter.default.post(name: .menuBarIconStyleChanged, object: nil)

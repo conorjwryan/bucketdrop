@@ -729,56 +729,19 @@ struct GeneralSettingsView: View {
             }
 
             Section {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 12)], spacing: 12) {
+                Picker("Menu bar icon", selection: Binding(
+                    get: { config.menuBarIconStyle },
+                    set: { config.menuBarIconStyle = $0 }
+                )) {
                     ForEach(MenuBarIconStyle.allCases) { style in
-                        MenuBarIconOption(
-                            style: style,
-                            isSelected: config.menuBarIconStyle == style
-                        ) { config.menuBarIconStyle = style }
+                        Text(style.label).tag(style)
                     }
                 }
-                .padding(.vertical, 4)
-            } header: {
-                Text("Menu Bar Icon")
             } footer: {
-                Text("Choose the glyph shown in the menu bar. Outline draws it as a wireframe; Solid fills it in. It renders white or black to match your menu bar.")
+                Text("The glyph shown in the menu bar. Outline draws it as a wireframe; Solid fills it in. Changes apply right away — look up at the menu bar to see it.")
             }
         }
         .formStyle(.grouped)
-    }
-}
-
-/// A selectable preview swatch for a menu-bar glyph, shown on a dark chip so it
-/// reads the way it will in the actual (usually dark) menu bar.
-private struct MenuBarIconOption: View {
-    let style: MenuBarIconStyle
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.black.opacity(0.85))
-                    Image(style.assetName)
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 22, height: 22)
-                        .foregroundStyle(.white)
-                }
-                .frame(height: 46)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
-                )
-                Text(style.label)
-                    .font(.caption)
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-            }
-        }
-        .buttonStyle(.plain)
     }
 }
 

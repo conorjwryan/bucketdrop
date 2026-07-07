@@ -727,15 +727,13 @@ struct SyncSettingsView: View {
 struct AboutSettingsView: View {
     var body: some View {
         Form {
-            Section("ShareMaster") {
+            Section {
                 HStack {
-                    AsyncImage(url: URL(string: "https://github.com/conorjwryan.png")) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Circle().fill(Color(nsColor: .quaternaryLabelColor))
-                    }
-                    .frame(width: 40, height: 40)
-                    .clipShape(Circle())
+                    Image("ConorAvatar")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 40, height: 40)
+                        .clipShape(Circle())
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Conor Ryan").font(.subheadline).fontWeight(.medium)
@@ -744,24 +742,38 @@ struct AboutSettingsView: View {
 
                     Spacer()
 
-                    Link("@conorjwryan", destination: URL(string: "https://x.com/conorjwryan")!)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("[X](https://x.com/conorjwryan) / [GitHub](https://github.com/conorjwryan)")
+                            .font(.caption)
+                        Text("[cjwr.dev](https://cjwr.dev)")
+                            .font(.caption)
+                    }
+                }
+            } header: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("ShareMaster")
+                    Text("ShareMaster is an open source project you can [contribute to](https://github.com/conorjwryan/sharemaster) and [sponsor](https://ko-fi.com/conorjwryan).")
                         .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                    Text("ShareMaster is developed by Conor J.W. Ryan")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
                 }
             }
 
             Section {
                 HStack {
-                    AsyncImage(url: URL(string: "https://github.com/fayazara.png")) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Circle().fill(Color(nsColor: .quaternaryLabelColor))
-                    }
-                    .frame(width: 32, height: 32)
-                    .clipShape(Circle())
+                    Image("FayazAvatar")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 32, height: 32)
+                        .clipShape(Circle())
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Fayaz Ahmed").font(.subheadline).fontWeight(.medium)
-                        Text("Built on the foundation of BucketDrop")
+                        Text("Original creator of BucketDrop")
                             .font(.caption).foregroundStyle(.secondary)
                     }
 
@@ -775,21 +787,12 @@ struct AboutSettingsView: View {
                     }
                 }
             } header: {
-                Text("Acknowledgements")
-            } footer: {
-                Text("Made in India • Improved in Vietnam")
-                    .frame(maxWidth: .infinity)
-            }
-
-            Section {
-                Button(role: .destructive) {
-                    NSApp.terminate(nil)
-                } label: {
-                    HStack {
-                        Spacer()
-                        Label("Quit ShareMaster", systemImage: "power")
-                        Spacer()
-                    }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Acknowledgements")
+                    Text("ShareMaster's original foundation was built on the BucketDrop project by Fayaz Ahmed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
                 }
             }
         }

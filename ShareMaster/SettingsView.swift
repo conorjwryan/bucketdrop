@@ -727,8 +727,58 @@ struct GeneralSettingsView: View {
             } footer: {
                 Text("The popover's files section can Browse a destination's folders or show Recent (All) — the newest uploads merged from every destination, each badged with where it lives. The list only loads while expanded; Recent (All) shows at most the number chosen here, keeping list requests down on providers that charge per operation.")
             }
+
+            Section {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 12)], spacing: 12) {
+                    ForEach(MenuBarIconStyle.allCases) { style in
+                        MenuBarIconOption(
+                            style: style,
+                            isSelected: config.menuBarIconStyle == style
+                        ) { config.menuBarIconStyle = style }
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("Menu Bar Icon")
+            } footer: {
+                Text("Choose the glyph shown in the menu bar. Outline draws it as a wireframe; Solid fills it in. It renders white or black to match your menu bar.")
+            }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// A selectable preview swatch for a menu-bar glyph, shown on a dark chip so it
+/// reads the way it will in the actual (usually dark) menu bar.
+private struct MenuBarIconOption: View {
+    let style: MenuBarIconStyle
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.black.opacity(0.85))
+                    Image(style.assetName)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 22, height: 22)
+                        .foregroundStyle(.white)
+                }
+                .frame(height: 46)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+                )
+                Text(style.label)
+                    .font(.caption)
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -198,6 +198,41 @@ extension S3Config {
     }
 }
 
+// MARK: - Menu bar icon (macOS)
+
+/// The glyph and treatment shown in the macOS menu bar. Each case maps to a
+/// template image in the asset catalog. Outline is line-art; solid is filled
+/// with the internal edges carved back out as negative space.
+enum MenuBarIconStyle: String, CaseIterable, Identifiable {
+    case planeOutline, planeFill, boxOutline, boxFill
+
+    var id: String { rawValue }
+
+    var assetName: String {
+        switch self {
+        case .planeOutline: return "MenuBarPlaneOutline"
+        case .planeFill:    return "MenuBarPlaneFill"
+        case .boxOutline:   return "MenuBarBoxOutline"
+        case .boxFill:      return "MenuBarBoxFill"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .planeOutline: return "Plane · Outline"
+        case .planeFill:    return "Plane · Solid"
+        case .boxOutline:   return "Box · Outline"
+        case .boxFill:      return "Box · Solid"
+        }
+    }
+}
+
+extension Notification.Name {
+    /// Posted when the menu-bar icon preference changes, so the status item
+    /// can refresh its image live.
+    static let menuBarIconStyleChanged = Notification.Name("ShareMaster.menuBarIconStyleChanged")
+}
+
 // MARK: - Store
 
 @Observable
@@ -239,6 +274,7 @@ final class ConfigStore {
         static let browserPaneMode = "config_browser_pane_mode"
         static let browserDefaultExpanded = "config_browser_default_expanded"
         static let browseLocations = "config_browse_locations"
+        static let menuBarIconStyle = "config_menu_bar_icon_style"
     }
 
     private(set) var accounts: [Account] = [] {
@@ -282,6 +318,16 @@ final class ConfigStore {
     /// user's last choice, so this only seeds the very first launch.
     var browserDefaultExpanded: Bool = false {
         didSet { defaults.set(browserDefaultExpanded, forKey: Keys.browserDefaultExpanded) }
+    }
+
+    /// macOS-only (not synced): which glyph/treatment the menu-bar status item
+    /// shows. Changing it posts `.menuBarIconStyleChanged` so the item updates
+    /// without a relaunch.
+    var menuBarIconStyle: MenuBarIconStyle = .planeOutline {
+        didSet {
+            defaults.set(menuBarIconStyle.rawValue, forKey: Keys.menuBarIconStyle)
+            NotificationCenter.default.post(name: .menuBarIconStyleChanged, object: nil)
+        }
     }
 
     /// macOS-only (not synced): the folder the browser was last showing per
@@ -369,6 +415,10 @@ final class ConfigStore {
         let storedLimit = defaults.integer(forKey: Keys.recentLimit)
         if storedLimit > 0 { recentLimit = storedLimit }
         browserDefaultExpanded = defaults.bool(forKey: Keys.browserDefaultExpanded)
+        if let raw = defaults.string(forKey: Keys.menuBarIconStyle),
+           let style = MenuBarIconStyle(rawValue: raw) {
+            menuBarIconStyle = style
+        }
         // Seed the expanded state from the preference on first launch; after
         // that the last state is remembered.
         recentsExpanded = defaults.object(forKey: Keys.recentsExpanded) != nil

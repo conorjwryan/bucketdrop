@@ -107,11 +107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
-            // Swap "MenuBarPlane" ↔ "MenuBarBox" to change the menu-bar glyph.
-            let icon = NSImage(named: "MenuBarPlane") ?? NSImage(systemSymbolName: "paperplane", accessibilityDescription: "ShareMaster")
-            icon?.isTemplate = true
-            icon?.size = NSSize(width: 20, height: 20)
-            button.image = icon
+            applyMenuBarIcon()
             button.action = #selector(togglePopover)
             button.target = self
 
@@ -127,6 +123,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             button.addSubview(dragView)
+        }
+
+        // Refresh the status-item glyph whenever the preference changes.
+        NotificationCenter.default.addObserver(
+            forName: .menuBarIconStyleChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyMenuBarIcon()
         }
 
         // Close a drag-opened popover once the upload has finished (and its
@@ -186,6 +189,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: work)
     }
     
+    /// Applies the user's chosen glyph to the status item as a template image
+    /// (renders white/black to match the menu bar). Falls back to an SF Symbol
+    /// if the asset is somehow missing.
+    private func applyMenuBarIcon() {
+        guard let button = statusItem?.button else { return }
+        let style = ConfigStore.shared.menuBarIconStyle
+        let icon = NSImage(named: style.assetName)
+            ?? NSImage(systemSymbolName: "paperplane", accessibilityDescription: "ShareMaster")
+        icon?.isTemplate = true
+        icon?.size = NSSize(width: 20, height: 20)
+        button.image = icon
+    }
+
     @objc func togglePopover() {
         guard let popover = popover else { return }
 

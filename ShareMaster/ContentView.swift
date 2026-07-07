@@ -143,11 +143,10 @@ struct ContentView: View {
             Task { await reloadExpanded() }
         }
         .onChange(of: selectedDestinationID) { _, newValue in
+            // Just remember the focus. Navigation to the destination's root is
+            // driven explicitly by selectDestination(_:); on popover open the
+            // last-viewed folder is restored by the .task above.
             if let newValue { config.lastSelectedDestinationID = newValue }
-            // A new destination has its own folder tree and default sort.
-            browseSortOverride = nil
-            restoreBrowseLocation()
-            Task { await reloadExpanded() }
         }
         .onChange(of: browsePrefix) { _, newValue in
             if let id = selectedDestinationID { config.setBrowseLocation(newValue, for: id) }
@@ -220,13 +219,6 @@ struct ContentView: View {
             Spacer()
 
             HStack(spacing: 8) {
-                HeaderIconButton(systemName: "square.and.arrow.up", help: "Upload files") {
-                    if let destination = selectedDestination, !isUploading {
-                        openFilePicker(destination, keyPrefix: uploadKeyPrefix)
-                    }
-                }
-                .disabled(selectedDestination == nil || isUploading)
-
                 HeaderIconButton(systemName: "folder.badge.plus", help: "New folder") {
                     newFolderName = ""
                     showNewFolderPrompt = true
@@ -245,13 +237,14 @@ struct ContentView: View {
                     openSettings()          // closes popover + activates app
                     openNativeSettings()    // opens the native Settings scene
                 }
+
+                HeaderIconButton(systemName: "power", help: "Quit ShareMaster") {
+                    NSApp.terminate(nil)
+                }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .contextMenu {
-            Button("Quit ShareMaster") { NSApp.terminate(nil) }
-        }
     }
 
     // MARK: - Breadcrumb bar
@@ -402,7 +395,7 @@ struct ContentView: View {
         let isDrop = dropTargetID == destination.id
         return DestinationRow(destination: destination, isSelected: isSelected, isDropTarget: isDrop)
             .contentShape(Rectangle())
-            .onTapGesture { selectedDestinationID = destination.id }
+            .onTapGesture { selectDestination(destination) }
             .contextMenu {
                 // The editor doesn't fit inside the popover, so the draft
                 // is handed to the Settings window, which opens its
@@ -425,12 +418,29 @@ struct ContentView: View {
             )) { providers in
                 guard !isUploading else { return false }
                 NSApp.activate(ignoringOtherApps: true)
-                // Move focus to the destination that received the drop so the
-                // right side reflects where the files went.
-                selectedDestinationID = destination.id
+                // Move focus to the destination that received the drop (and reset
+                // it to its root) so the right side reflects where the files went.
+                selectDestination(destination)
                 handleDrop(providers, to: destination)
                 return true
             }
+    }
+
+    /// Focuses a destination and always returns it to its configured root —
+    /// tapping a destination icon (even the current one) resets the browser to
+    /// the "stated" destination rather than a previously-visited subfolder.
+    /// Navigation the user does afterwards persists until the next such tap.
+    private func selectDestination(_ destination: Destination) {
+        selectedDestinationID = destination.id
+        browseSortOverride = nil
+        let root = rootPrefix(for: destination)
+        browsePrefix = root
+        config.setBrowseLocation(root, for: destination.id)
+        Task { await reloadExpanded() }
+    }
+
+    private func rootPrefix(for destination: Destination) -> String {
+        config.s3Config(for: destination)?.pathPrefix ?? ""
     }
 
     // MARK: - Detail (file table)

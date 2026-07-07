@@ -373,13 +373,13 @@ struct ContentView: View {
 
             Divider()
             HStack {
-                Button { addDestination() } label: {
+                Button { addDestinationFromCurrentView() } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Add destination")
+                .help(addButtonHelp)
 
                 Spacer()
 
@@ -407,13 +407,13 @@ struct ContentView: View {
             Spacer(minLength: 0)
             Divider()
             VStack(spacing: 12) {
-                Button { addDestination() } label: {
+                Button { addDestinationFromCurrentView() } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Add destination")
+                .help(addButtonHelp)
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { sidebarCollapsed = false }
@@ -494,6 +494,27 @@ struct ContentView: View {
     /// Opens Settings on the Add-Destination flow. Hands a blank draft to the
     /// Settings window (via the same pending-draft channel used by Duplicate)
     /// so its Destinations editor opens ready to fill in.
+    /// The sidebar "+" button. When browsing inside a folder that isn't already
+    /// a destination, it clones the current destination rooted there (prefilled
+    /// name, same account/bucket/options, rewritten public URL). Otherwise —
+    /// on Recents, or when the current folder is already a destination — it
+    /// falls back to opening a blank destination editor.
+    private var addButtonHelp: String {
+        if isBrowse, selectedDestination != nil, destinationAtCurrentPrefix == nil {
+            let name = folderDisplayName(S3Folder(prefix: browsePrefix))
+            return name.isEmpty ? "Save this folder as a destination" : "Save “\(name)” as a destination"
+        }
+        return "Add destination"
+    }
+
+    private func addDestinationFromCurrentView() {
+        if isBrowse, selectedDestination != nil, destinationAtCurrentPrefix == nil {
+            createDestinationHere()
+        } else {
+            addDestination()
+        }
+    }
+
     private func addDestination() {
         if let account = config.visibleAccounts.first {
             config.pendingDuplicate = Destination(accountId: account.id)
@@ -1254,8 +1275,11 @@ struct ContentView: View {
         }
     }
 
-    /// Saves a copy of the selected destination rooted at the current folder —
-    /// same account, bucket and options, only the name and path change.
+    /// Opens the Settings destination editor pre-filled from the current browse
+    /// view — same account, bucket, credentials and options as the selected
+    /// destination, with the name, path and (when it tracks the folder) the
+    /// public URL swapped to the current folder. Nothing is saved until the user
+    /// presses Add, so they can review or tweak first.
     private func createDestinationHere() {
         guard let destination = selectedDestination else { return }
         var copy = destination
@@ -1265,9 +1289,43 @@ struct ContentView: View {
             : folderDisplayName(S3Folder(prefix: browsePrefix))
         let names = config.destinations.map(\.name)
         copy.name = names.contains(baseName) ? ConfigStore.copyName(baseName, existing: names) : baseName
+        copy.publicUrlBase = Self.rewrittenPublicUrlBase(
+            copy.publicUrlBase, from: destination.pathPrefix, to: browsePrefix)
         copy.pathPrefix = browsePrefix
-        copy.sortOrder = 0
-        config.upsertDestination(copy)
+        copy.sortOrder = destination.sortOrder + 1
+        config.pendingDuplicate = copy   // opens editor pre-filled, awaiting Add
+        openSettings()
+        openNativeSettings()
+    }
+
+    /// Rewrites a destination's public URL when it's cloned to a sibling folder.
+    /// If the URL ends with the original prefix path (or just its last folder
+    /// segment) that suffix is swapped for the new folder — e.g. cloning
+    /// `shots/` → `backups/` turns `cdn.cjri.uk/shots` into `cdn.cjri.uk/backups`.
+    /// URLs that don't visibly track the folder are left untouched.
+    static func rewrittenPublicUrlBase(_ base: String, from oldPrefix: String, to newPrefix: String) -> String {
+        guard !base.isEmpty else { return base }
+        func trimSlashes(_ s: String) -> String {
+            var t = s
+            while t.hasSuffix("/") { t.removeLast() }
+            return t
+        }
+        let trimmedBase = trimSlashes(base)
+        let oldPath = trimSlashes(oldPrefix)   // e.g. "media/shots"
+        let newPath = trimSlashes(newPrefix)   // e.g. "media/backups"
+
+        // 1. The whole old prefix path appears at the end of the URL.
+        if !oldPath.isEmpty, trimmedBase.hasSuffix("/" + oldPath) {
+            return String(trimmedBase.dropLast(oldPath.count)) + newPath
+        }
+        // 2. Only the old prefix's last folder segment appears at the end.
+        let oldSeg = (oldPath as NSString).lastPathComponent
+        let newSeg = (newPath as NSString).lastPathComponent
+        if !oldSeg.isEmpty, !newSeg.isEmpty, trimmedBase.hasSuffix("/" + oldSeg) {
+            return String(trimmedBase.dropLast(oldSeg.count)) + newSeg
+        }
+        // 3. URL doesn't track the folder — leave it for the user to adjust.
+        return base
     }
 
     /// Resolves a share link for each object so copy/preview are instant.

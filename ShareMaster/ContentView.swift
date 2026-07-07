@@ -438,11 +438,15 @@ struct ContentView: View {
             .contentShape(Rectangle())
             .onTapGesture { selectDestination(destination) }
             .contextMenu {
-                // The editor doesn't fit inside the popover, so the draft
-                // is handed to the Settings window, which opens its
-                // Destinations editor pre-filled with it.
+                // The editor doesn't fit inside the popover, so destination
+                // actions are handed to the Settings window.
+                Button("Edit Destination Settings…") {
+                    config.pendingDestinationEditor = .edit(destination)
+                    openSettings()
+                    openNativeSettings()
+                }
                 Button("Duplicate…") {
-                    config.pendingDuplicate = config.duplicateDraft(of: destination)
+                    config.pendingDestinationEditor = .add(config.duplicateDraft(of: destination))
                     openSettings()
                     openNativeSettings()
                 }
@@ -517,7 +521,7 @@ struct ContentView: View {
 
     private func addDestination() {
         if let account = config.visibleAccounts.first {
-            config.pendingDuplicate = Destination(accountId: account.id)
+            config.pendingDestinationEditor = .add(Destination(accountId: account.id))
         }
         openSettings()
         openNativeSettings()
@@ -641,7 +645,7 @@ struct ContentView: View {
                 }
                 if let existing = destinationAtCurrentPrefix {
                     Button {
-                        config.pendingDuplicate = existing   // opens editor pre-filled
+                        config.pendingDestinationEditor = .edit(existing)
                         openSettings()
                         openNativeSettings()
                     } label: {
@@ -1293,7 +1297,7 @@ struct ContentView: View {
             copy.publicUrlBase, from: destination.pathPrefix, to: browsePrefix)
         copy.pathPrefix = browsePrefix
         copy.sortOrder = destination.sortOrder + 1
-        config.pendingDuplicate = copy   // opens editor pre-filled, awaiting Add
+        config.pendingDestinationEditor = .add(copy)
         openSettings()
         openNativeSettings()
     }

@@ -138,6 +138,27 @@ struct Destination: Codable, Identifiable, Hashable {
     }
 }
 
+enum DestinationEditorRequest: Hashable {
+    case add(Destination)
+    case edit(Destination)
+
+    var destination: Destination {
+        switch self {
+        case .add(let destination), .edit(let destination):
+            return destination
+        }
+    }
+
+    var isNew: Bool {
+        switch self {
+        case .add:
+            return true
+        case .edit:
+            return false
+        }
+    }
+}
+
 /// How the bucket browser orders a folder's contents.
 enum BrowserSort: String, Codable, CaseIterable, Identifiable {
     case recentFirst       // newest uploads first
@@ -590,10 +611,10 @@ final class ConfigStore {
 
     // MARK: - Duplication
 
-    /// Set by the Mac popover's Duplicate action; the Settings window switches
-    /// to the Destinations tab and opens the editor pre-filled with it.
+    /// Set by Mac popover destination actions; the Settings window switches to
+    /// the Destinations tab and opens the editor for the requested destination.
     /// Transient — never persisted.
-    var pendingDuplicate: Destination?
+    var pendingDestinationEditor: DestinationEditorRequest?
 
     /// "Backups" → "Backups (1)"; "Backups (1)" → "Backups (2)". Strips an
     /// existing "(n)" suffix first, then takes the first free number.

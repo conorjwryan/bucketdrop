@@ -157,6 +157,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             self.popoverOpenedByDrag = false
         }
+
+        // SwiftUI context menus inside an NSPopover can occasionally leave a
+        // transient popover active after the menu dismisses. Keep the user's
+        // pin preference authoritative at the app boundary.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main
+        ) { [weak self] _ in
+            guard ConfigStore.shared.pinPopover == false else { return }
+            self?.popover?.performClose(nil)
+        }
         
         // Setup popover. Content is built lazily on first open and torn down
         // shortly after close, so an idle ShareMaster holds no SwiftUI

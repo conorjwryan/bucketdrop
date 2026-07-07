@@ -35,12 +35,12 @@ struct SettingsView: View {
                 .tag(Tab.about)
         }
         .frame(width: 520, height: 540)
-        // A duplicate started from the popover lands on the Destinations tab,
-        // where DestinationsSettingsView opens the editor with it.
+        // Destination actions started from the popover land on the
+        // Destinations tab, where DestinationsSettingsView opens the editor.
         .onAppear {
-            if config.pendingDuplicate != nil { selection = .destinations }
+            if config.pendingDestinationEditor != nil { selection = .destinations }
         }
-        .onChange(of: config.pendingDuplicate) { _, pending in
+        .onChange(of: config.pendingDestinationEditor) { _, pending in
             if pending != nil { selection = .destinations }
         }
         .task {
@@ -386,10 +386,10 @@ struct DestinationsSettingsView: View {
         } message: {
             Text("This removes the destination from ShareMaster. Files already uploaded to its bucket are not affected.")
         }
-        // A duplicate started from the popover's context menu: open the
-        // editor with the ready-made draft.
-        .onAppear(perform: consumePendingDuplicate)
-        .onChange(of: config.pendingDuplicate) { _, _ in consumePendingDuplicate() }
+        // A destination action started from the popover: open the editor with
+        // the requested destination or ready-made draft.
+        .onAppear(perform: consumePendingDestinationEditor)
+        .onChange(of: config.pendingDestinationEditor) { _, _ in consumePendingDestinationEditor() }
     }
 
     private func duplicate(_ destination: Destination) {
@@ -397,11 +397,11 @@ struct DestinationsSettingsView: View {
         editingDestination = config.duplicateDraft(of: destination)
     }
 
-    private func consumePendingDuplicate() {
-        guard let draft = config.pendingDuplicate else { return }
-        config.pendingDuplicate = nil
-        isNewDestination = true
-        editingDestination = draft
+    private func consumePendingDestinationEditor() {
+        guard let request = config.pendingDestinationEditor else { return }
+        config.pendingDestinationEditor = nil
+        isNewDestination = request.isNew
+        editingDestination = request.destination
     }
 
     private func subtitle(_ d: Destination) -> String {

@@ -232,8 +232,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController?.view.window?.makeKey()
 
         // Show the standard rounded selection background behind the icon while
-        // the popover is open, matching every other menu-bar item.
-        button.highlight(true)
+        // the popover is open, matching every other menu-bar item. Deferred to
+        // the next runloop tick: the click reaches us via the drag view's
+        // performClick(_:), which highlights and then *un*-highlights the button
+        // as it returns — setting it synchronously here would be wiped, so we
+        // run just after that reset to make the highlight stick.
+        DispatchQueue.main.async { [weak button] in
+            button?.highlight(true)
+        }
 
         // Add solid white background to popover (including the arrow/notch)
         if let contentView = popover.contentViewController?.view,

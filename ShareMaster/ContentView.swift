@@ -101,11 +101,14 @@ struct ContentView: View {
                 breadcrumbHeaderBar
                 Divider()
                 HStack(spacing: 0) {
-                    if !sidebarCollapsed {
+                    if sidebarCollapsed {
+                        collapsedRail
+                            .frame(width: 46)
+                    } else {
                         sidebar
                             .frame(width: 190)
-                        Divider()
                     }
+                    Divider()
                     detail
                 }
             }
@@ -198,16 +201,8 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            // Generic cloud-upload mark (per request, the real logo comes later).
-            Image(systemName: "cloud.fill")
-                .font(.system(size: 22))
-                .foregroundStyle(Color.accentColor)
-                .overlay(
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
-                        .offset(y: 1)
-                )
+            ShareMasterLogo()
+                .frame(width: 34, height: 34)
             // The word mark doubles as the reveal switch for hidden
             // destinations; deliberately gives no visual hint.
             Text("ShareMaster")
@@ -399,6 +394,38 @@ struct ContentView: View {
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
     }
 
+    /// The thin rail shown when the sidebar is collapsed: the file table shifts
+    /// right of it, and the add / expand controls stay pinned to the bottom in
+    /// the same spot as the expanded footer (rather than jumping to the header).
+    private var collapsedRail: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Divider()
+            VStack(spacing: 12) {
+                Button { addDestination() } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Add destination")
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { sidebarCollapsed = false }
+                } label: {
+                    Image(systemName: "chevron.right.2")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Show destinations")
+            }
+            .padding(.vertical, 8)
+        }
+        .frame(maxWidth: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+    }
+
     private func destinationRow(_ destination: Destination) -> some View {
         let isSelected = selectedDestinationID == destination.id
         let isDrop = dropTargetID == destination.id
@@ -499,17 +526,6 @@ struct ContentView: View {
 
     private var columnHeader: some View {
         HStack(spacing: 0) {
-            if sidebarCollapsed {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { sidebarCollapsed = false }
-                } label: {
-                    Image(systemName: "sidebar.left").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Show destinations")
-                .padding(.trailing, 10)
-            }
-
             if isBrowse && canGoBack {
                 Button { browseBack() } label: {
                     Image(systemName: "chevron.backward").foregroundStyle(.secondary)
@@ -1399,6 +1415,31 @@ struct ContentView: View {
     }
 
     private static var quickLookCoordinator: QuickLookCoordinator?
+}
+
+// MARK: - Brand logo
+
+/// The ShareMaster mark: a paper plane flying out of an open box, composited
+/// from the two icon layers so it matches the app icon.
+struct ShareMasterLogo: View {
+    var body: some View {
+        GeometryReader { geo in
+            let s = min(geo.size.width, geo.size.height)
+            ZStack {
+                Image("LogoBox")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: s * 0.78, height: s * 0.78)
+                    .offset(x: -s * 0.12, y: s * 0.16)
+                Image("LogoPlane")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: s * 0.52, height: s * 0.52)
+                    .offset(x: s * 0.30, y: -s * 0.30)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+    }
 }
 
 // MARK: - Header action button

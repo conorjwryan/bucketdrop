@@ -373,6 +373,16 @@ struct ContentView: View {
 
             Divider()
             HStack {
+                Button { addDestination() } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Add destination")
+
+                Spacer()
+
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { sidebarCollapsed = true }
                 } label: {
@@ -382,7 +392,6 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Hide destinations")
-                Spacer()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -441,6 +450,17 @@ struct ContentView: View {
 
     private func rootPrefix(for destination: Destination) -> String {
         config.s3Config(for: destination)?.pathPrefix ?? ""
+    }
+
+    /// Opens Settings on the Add-Destination flow. Hands a blank draft to the
+    /// Settings window (via the same pending-draft channel used by Duplicate)
+    /// so its Destinations editor opens ready to fill in.
+    private func addDestination() {
+        if let account = config.visibleAccounts.first {
+            config.pendingDuplicate = Destination(accountId: account.id)
+        }
+        openSettings()
+        openNativeSettings()
     }
 
     // MARK: - Detail (file table)
@@ -1428,16 +1448,44 @@ enum Col {
     static let actions: CGFloat = 34
 }
 
-/// A stable icon + colour for a destination, derived from its id so the same
-/// destination always looks the same without needing a stored icon field.
+/// The curated set of destination icons and colours the user can pick from in
+/// Settings. Symbols and tints are stored on the destination by name.
+enum DestinationIcon {
+    static let symbols = [
+        "folder.fill", "photo.fill", "camera.fill", "doc.fill",
+        "archivebox.fill", "tray.full.fill", "icloud.fill", "star.fill",
+        "film.fill", "music.note", "globe", "cube.box.fill",
+        "paintbrush.fill", "hammer.fill", "cart.fill", "shippingbox.fill"
+    ]
+
+    /// Ordered palette; the key is what gets stored on the destination.
+    static let tints: [(name: String, color: Color)] = [
+        ("blue", .blue), ("green", .green), ("orange", .orange), ("red", .red),
+        ("purple", .purple), ("pink", .pink), ("teal", .teal),
+        ("indigo", .indigo), ("yellow", .yellow), ("gray", .gray)
+    ]
+
+    static func color(_ name: String?) -> Color {
+        tints.first { $0.name == name }?.color ?? .blue
+    }
+
+    static let defaultSymbol = "folder.fill"
+
+    /// A stable default tint from the id so uncustomised destinations still read
+    /// as distinct coloured folders (rather than all identical).
+    static func defaultTint(for id: UUID) -> String {
+        let bytes = withUnsafeBytes(of: id.uuid) { Array($0) }
+        let sum = bytes.reduce(0) { $0 + Int($1) }
+        return tints[sum % tints.count].name
+    }
+}
+
+/// The icon + colour to draw for a destination: the user's choice, else a
+/// folder tinted stably from the id.
 func destinationIconStyle(_ destination: Destination) -> (symbol: String, color: Color) {
-    let symbols = ["folder.fill", "camera.fill", "cylinder.split.1x2.fill",
-                   "archivebox.fill", "photo.fill", "tray.full.fill",
-                   "shippingbox.fill", "doc.fill", "square.stack.3d.up.fill"]
-    let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .teal, .red, .indigo]
-    let bytes = withUnsafeBytes(of: destination.id.uuid) { Array($0) }
-    let sum = bytes.reduce(0) { $0 + Int($1) }
-    return (symbols[sum % symbols.count], colors[(sum / 7) % colors.count])
+    let symbol = destination.iconSymbol ?? DestinationIcon.defaultSymbol
+    let tint = destination.iconTint ?? DestinationIcon.defaultTint(for: destination.id)
+    return (symbol, DestinationIcon.color(tint))
 }
 
 // MARK: - Destination sidebar row

@@ -63,6 +63,11 @@ struct Destination: Codable, Identifiable, Hashable {
     /// Default ordering for this destination's bucket browser. Optional so
     /// existing stored JSON decodes; nil means recently uploaded first.
     var browserSort: BrowserSort? = nil
+    /// Per-destination sidebar icon (SF Symbol name) and colour (palette key),
+    /// chosen in macOS Settings. Optional so existing stored JSON decodes; nil
+    /// falls back to a folder icon tinted stably from the destination id.
+    var iconSymbol: String? = nil
+    var iconTint: String? = nil
 
     init(name: String = "", accountId: UUID) {
         self.name = name
@@ -89,6 +94,8 @@ struct Destination: Codable, Identifiable, Hashable {
         case downloadDirBookmark
         case hidden
         case browserSort
+        case iconSymbol
+        case iconTint
     }
 
     init(from decoder: Decoder) throws {
@@ -112,6 +119,8 @@ struct Destination: Codable, Identifiable, Hashable {
         downloadDirBookmark = try container.decodeIfPresent(Data.self, forKey: .downloadDirBookmark)
         hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden)
         browserSort = try container.decodeIfPresent(BrowserSort.self, forKey: .browserSort)
+        iconSymbol = try container.decodeIfPresent(String.self, forKey: .iconSymbol)
+        iconTint = try container.decodeIfPresent(String.self, forKey: .iconTint)
     }
 
     var isHidden: Bool {

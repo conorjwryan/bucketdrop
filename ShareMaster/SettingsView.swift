@@ -392,6 +392,10 @@ struct DestinationEditor: View {
     @State private var customHours: Int = 24
     @State private var overrideTransfers = false
 
+    private var selectedSymbol: String { destination.iconSymbol ?? DestinationIcon.defaultSymbol }
+    private var selectedTintName: String { destination.iconTint ?? DestinationIcon.defaultTint(for: destination.id) }
+    private var selectedColor: Color { DestinationIcon.color(selectedTintName) }
+
     enum ExpiryPreset: Hashable {
         case h1, h6, d1, d7, custom
         var seconds: Int? {
@@ -416,6 +420,58 @@ struct DestinationEditor: View {
                 }
                 TextField("Bucket", text: $destination.bucket, prompt: Text("my-bucket"))
                 TextField("Path Prefix", text: $destination.pathPrefix, prompt: Text("backups/"))
+            }
+
+            Section("Icon") {
+                // Live preview
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(selectedColor.gradient)
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            Image(systemName: selectedSymbol)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white)
+                        )
+                    Text(destination.name.isEmpty ? "Preview" : destination.name)
+                        .fontWeight(.medium)
+                        .foregroundStyle(destination.name.isEmpty ? .secondary : .primary)
+                    Spacer()
+                }
+
+                // Colour swatches
+                HStack(spacing: 10) {
+                    ForEach(DestinationIcon.tints, id: \.name) { tint in
+                        Circle()
+                            .fill(tint.color)
+                            .frame(width: 22, height: 22)
+                            .overlay(
+                                Circle().strokeBorder(Color.primary.opacity(0.8),
+                                                      lineWidth: selectedTintName == tint.name ? 2.5 : 0)
+                            )
+                            .contentShape(Circle())
+                            .onTapGesture { destination.iconTint = tint.name }
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 2)
+
+                // Symbol grid
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 8), spacing: 6) {
+                    ForEach(DestinationIcon.symbols, id: \.self) { symbol in
+                        Image(systemName: symbol)
+                            .font(.system(size: 15))
+                            .frame(width: 32, height: 30)
+                            .foregroundStyle(selectedSymbol == symbol ? selectedColor : Color.secondary)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(selectedSymbol == symbol ? selectedColor.opacity(0.18) : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture { destination.iconSymbol = symbol }
+                    }
+                }
+                .padding(.vertical, 2)
             }
 
             Section {

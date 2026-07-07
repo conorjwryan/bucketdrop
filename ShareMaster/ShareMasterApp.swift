@@ -55,6 +55,7 @@ extension Notification.Name {
 /// specific destination; dropping on the icon itself uploads to the current one.
 final class StatusItemDragView: NSView {
     var onDragEntered: (() -> Void)?
+    var onRightClick: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -79,12 +80,21 @@ final class StatusItemDragView: NSView {
     }
 
     // This view sits on top of the status bar button, so forward clicks to it.
+    // Control-click is treated as a right-click, matching macOS convention.
     override func mouseDown(with event: NSEvent) {
-        (superview as? NSStatusBarButton)?.performClick(nil)
+        if event.modifierFlags.contains(.control) {
+            onRightClick?()
+        } else {
+            (superview as? NSStatusBarButton)?.performClick(nil)
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onRightClick?()
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     var modelContainer: ModelContainer?
@@ -122,6 +132,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self.showPopover()
                 }
             }
+            dragView.onRightClick = { [weak self] in
+                self?.showStatusMenu()
+            }
             button.addSubview(dragView)
         }
 
@@ -152,14 +165,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover?.behavior = .semitransient
         popover?.animates = true
 
+        // Drop the selection highlight the instant the popover starts closing,
+        // rather than waiting for didClose (which only fires after the close
+        // animation finishes, leaving the pill lingering).
+        NotificationCenter.default.addObserver(
+            forName: NSPopover.willCloseNotification, object: popover, queue: .main
+        ) { [weak self] _ in
+            self?.statusItem?.button?.highlight(false)
+        }
+
         NotificationCenter.default.addObserver(
             forName: NSPopover.didCloseNotification, object: popover, queue: .main
         ) { [weak self] _ in
             // Clear the drag flag so a later click-opened popover doesn't
             // auto-close after an unrelated upload.
             self?.popoverOpenedByDrag = false
-            // Drop the selection highlight now that the popover is dismissed.
-            self?.statusItem?.button?.highlight(false)
             self?.schedulePopoverTeardown()
         }
     }
@@ -228,6 +248,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // as the user interacts with anything else.
         popover.behavior = ConfigStore.shared.pinPopover ? .semitransient : .transient
 
+        // Follow the system Light/Dark setting. Without this the popover
+        // inherits the dark/vibrant appearance of the menu-bar button it's
+        // anchored to and renders dark even in Light Mode.
+        popover.appearance = NSApp.effectiveAppearance
+
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
 
@@ -259,6 +284,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func openSettings() {
         popover?.performClose(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Right-click / control-click menu on the status item: Settings and Quit.
+    ///
+    /// Presented by assigning `statusItem.menu` and clicking, rather than
+    /// `NSMenu.popUp(in:)`. A menu popped up anchored to the status button
+    /// inherits the *menu bar's* dark/vibrant appearance and renders dark even
+    /// in Light Mode; the system-presented status menu uses the correct system
+    /// appearance (and draws the selection highlight for us). The menu is
+    /// detached again in `menuDidClose` so left-click still opens the popover.
+    private func showStatusMenu() {
+        guard let statusItem = statusItem else { return }
+        popover?.performClose(nil)
+
+        let menu = NSMenu()
+        menu.delegate = self
+        let settings = NSMenuItem(
+            title: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+        menu.addItem(.separator())
+        // A nil target lets the standard Quit travel up to NSApp.
+        menu.addItem(NSMenuItem(
+            title: "Quit ShareMaster", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        // Detach so a later left-click opens the popover instead of the menu.
+        statusItem?.menu = nil
+    }
+
+    @objc private func openSettingsFromMenu() {
+        NSApp.activate(ignoringOtherApps: true)
+        // SwiftUI's Settings scene is opened through this AppKit action; the
+        // selector was renamed from Preferences in macOS 13, so fall back for
+        // safety.
+        if NSApp.responds(to: Selector(("showSettingsWindow:"))) {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        } else {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
     }
 }
 

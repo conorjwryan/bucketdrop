@@ -129,9 +129,7 @@ struct ContentView: View {
                 selectedDestinationID = destinations.first { $0.id == remembered }?.id ?? destinations.first?.id
             }
             restoreBrowseLocation()
-            if isAppActive {
-                await reloadExpanded()
-            }
+            await reloadExpanded()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             isAppActive = true
@@ -1089,10 +1087,6 @@ struct ContentView: View {
 
     private func startForegroundReload() {
         listTask?.cancel()
-        guard NSApp.isActive else {
-            isLoadingList = false
-            return
-        }
         listTask = Task { @MainActor in
             await reloadExpanded()
         }
@@ -1100,10 +1094,6 @@ struct ContentView: View {
 
     private func startForegroundBrowseLoad() {
         listTask?.cancel()
-        guard NSApp.isActive else {
-            isLoadingList = false
-            return
-        }
         listTask = Task { @MainActor in
             await loadBrowse()
         }
@@ -1111,7 +1101,7 @@ struct ContentView: View {
 
     /// Loads whichever mode is showing, if the section is expanded.
     private func reloadExpanded() async {
-        guard config.recentsExpanded, NSApp.isActive else { return }
+        guard config.recentsExpanded else { return }
         if isBrowse {
             await loadBrowse()
         } else {
@@ -1121,7 +1111,6 @@ struct ContentView: View {
 
     /// Recent (All): newest-first, merged across every visible destination.
     private func loadRecentAll() async {
-        guard NSApp.isActive else { return }
         guard !destinations.isEmpty else { recentItems = []; return }
         isLoadingList = true
         defer { isLoadingList = false }
@@ -1141,7 +1130,7 @@ struct ContentView: View {
             }
             for await items in group { merged.append(contentsOf: items) }
         }
-        guard !Task.isCancelled, NSApp.isActive else { return }
+        guard !Task.isCancelled else { return }
         recentItems = Array(
             merged.sorted { $0.object.lastModified > $1.object.lastModified }
                 .prefix(config.recentLimit)
@@ -1229,7 +1218,6 @@ struct ContentView: View {
     }
 
     private func loadBrowse() async {
-        guard NSApp.isActive else { return }
         guard let destination = selectedDestination,
               let cfg = config.s3Config(for: destination) else {
             browseFolders = []; browseItems = []; return
@@ -1254,10 +1242,10 @@ struct ContentView: View {
                 if token == nil { break }
             }
             let (folders, objects) = Self.sortedBrowse(folders: allFolders, objects: allObjects, by: sort)
-            guard !Task.isCancelled, NSApp.isActive else { return }
+            guard !Task.isCancelled else { return }
             browseFolders = folders
             browseItems = await resolveItems(objects, destination: destination, config: cfg)
-            guard !Task.isCancelled, NSApp.isActive else { return }
+            guard !Task.isCancelled else { return }
             browseError = nil
             browseErrorIsPermission = false
         } catch {

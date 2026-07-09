@@ -15,7 +15,6 @@ struct SettingsView: View {
 
     var config = ConfigStore.shared
     @State private var selection: Tab = .general
-    @State private var isAppActive = NSApp.isActive
 
     var body: some View {
         TabView(selection: $selection) {
@@ -44,24 +43,11 @@ struct SettingsView: View {
         .onChange(of: config.pendingDestinationEditor) { _, pending in
             if pending != nil { selection = .destinations }
         }
-        .task(id: isAppActive) {
-            // The Settings window can stay open indefinitely, and the
-            // keychain posts no change notifications. Poll only while
-            // ShareMaster is focused; when inactive, let the app go quiet.
-            guard isAppActive else { return }
+        .task {
             config.refreshFromCloud()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                guard !Task.isCancelled, NSApp.isActive else { return }
-                config.refreshFromCloud()
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            isAppActive = true
             config.refreshFromCloud()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            isAppActive = false
         }
     }
 }

@@ -78,14 +78,8 @@ struct DestinationListView: View {
                     config.revealHidden = false
                 }
             }
-            .task(id: scenePhase) {
-                // The keychain posts no change notifications, so poll the
-                // cloud payload while foregrounded to pick up edits made on
-                // other devices without a background/foreground cycle. Cheap:
-                // one keychain read; adoptCloudIfNewer bails on same version.
-                guard scenePhase == .active else { return }
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(5))
+            .task {
+                if scenePhase == .active {
                     config.refreshFromCloud()
                 }
             }

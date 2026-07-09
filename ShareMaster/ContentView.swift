@@ -133,18 +133,6 @@ struct ContentView: View {
                 await reloadExpanded()
             }
         }
-        .task(id: isAppActive) {
-            // The keychain posts no change notifications, so poll the cloud
-            // payload only while the popover is open and ShareMaster is active.
-            // When the app loses focus this task is cancelled, leaving App Nap
-            // with no sync timer to wake for.
-            guard isAppActive else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                guard !Task.isCancelled, NSApp.isActive else { return }
-                config.refreshFromCloud()
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             isAppActive = true
             config.refreshFromCloud()

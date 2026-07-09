@@ -249,6 +249,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func showPopover() {
         guard let popover = popover, let button = statusItem?.button, !popover.isShown else { return }
 
+        ConfigStore.shared.refreshFromCloud()
+
         popoverTeardown?.cancel()
         if popover.contentViewController == nil {
             popover.contentViewController = makePopoverContentViewController()

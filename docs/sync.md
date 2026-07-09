@@ -6,18 +6,19 @@ Config (accounts, destinations, settings) and credentials sync between macOS and
 
 - All per-account secrets **and** a whole-config JSON payload (keychain item `cloud_config_payload`) are stored as `kSecAttrSynchronizable` keychain items in the shared access group `HU9TH52NNC.com.cjwr.ShareMaster.sync`. The entitlement `$(AppIdentifierPrefix)com.cjwr.ShareMaster.sync` is present in all three targets; on macOS the queries additionally need `kSecUseDataProtectionKeychain`.
 - Account/destination transfer settings are part of that synced config: account upload/download caps and concurrent-part defaults sync, and destination overrides sync with the destination.
-- Conflict resolution is **last-writer-wins**: the payload carries an `updatedAt` timestamp compared against the locally stored `config_cloud_updated_at`; `adoptCloudIfNewer()` bails when the versions match (so polling is cheap — one keychain read).
+- Conflict resolution is **last-writer-wins**: the payload carries an `updatedAt` timestamp compared against the locally stored `config_cloud_updated_at`; `adoptCloudIfNewer()` bails when the versions match.
 - Every local mutation calls `pushToCloud()` (guarded by `isAdoptingCloud` so adopting a remote payload doesn't immediately re-push it).
 
 ## Refresh triggers (there are no keychain change notifications)
 
-Apple's keychain posts no change events, so every surface refreshes explicitly:
+Apple's keychain posts no change events, so every surface refreshes explicitly at user entry points rather than polling:
 
 | Surface | Trigger |
 |---|---|
-| macOS popover | `refreshFromCloud()` in the content `.task` on each open, **plus a 5-second poll loop while the popover is open** (cancelled on close) |
-| macOS Settings window | `refreshFromCloud()` on appear + poll while open |
-| iOS app | `refreshFromCloud()` when `scenePhase` becomes active, plus a poll loop while active (`DestinationListView`) |
+| macOS menu-bar click / popover open | `ShareMasterApp.showPopover()` calls `refreshFromCloud()` every time the menu-bar item opens, including quick reopens while the cached popover content is still alive |
+| macOS popover content | `refreshFromCloud()` in the content `.task` when the SwiftUI hierarchy is created, plus another refresh when ShareMaster becomes active |
+| macOS Settings window | `refreshFromCloud()` on appear and when ShareMaster becomes active |
+| iOS app | `refreshFromCloud()` on root view load and whenever `scenePhase` becomes active |
 | Share extension | `ConfigStore` init adopts the cloud payload; `reloadFromDefaults()` on each presentation because the extension process is reused |
 
 ## Migration & fallbacks
@@ -36,4 +37,4 @@ Settings UI: iOS has a Sync section in `IOSSettingsView` (three toggles; "suppre
 
 - Both devices must be on the **same iCloud account with iCloud Keychain enabled**.
 - **Known limitation:** turning `iCloudSyncEnabled` off stops payload sync, but secrets already written as synchronizable keychain items continue to ride iCloud Keychain — they are not demoted to local-only items.
-- Sync latency is whatever iCloud Keychain propagation takes; the 5 s polls only detect a payload that has already arrived on-device.
+- Sync latency is whatever iCloud Keychain propagation takes, plus the next explicit refresh trigger. If another device changes config while ShareMaster is already open and focused, the current device will pick it up when you reopen the macOS popover, activate ShareMaster again, reopen the iOS app, or present the share extension.

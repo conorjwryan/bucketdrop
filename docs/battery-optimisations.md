@@ -9,16 +9,16 @@ When ShareMaster receives `NSApplication.didResignActiveNotification`, the popov
 The specific macOS changes live in `ShareMaster/ContentView.swift`:
 
 - `ContentView` tracks `isAppActive = NSApp.isActive` and a cancellable `listTask`.
-- The popover's iCloud Keychain refresh loop is now `.task(id: isAppActive)` and exits while inactive, so the old five-second sync poll does not keep waking the process.
+- There is no periodic iCloud Keychain sync poll. `ShareMasterApp.showPopover()` pulls the latest cloud config whenever the menu-bar item opens, and `ContentView`/`SettingsView` also refresh when the app becomes active.
 - Browse and Recent (All) reloads go through `startForegroundReload()` / `startForegroundBrowseLoad()`, which cancel any previous listing and refuse to start a new one unless `NSApp.isActive`.
 - `loadBrowse()` and `loadRecentAll()` guard against inactive/stale completions before updating UI state, so a request that finishes after focus is lost does not continue repainting the popover.
 - `CachedAsyncImage` tracks app activity and cancels thumbnail URLSession work on resign-active. `ImageLoader` also ignores cancellation after network fetch and after ImageIO downsampling.
 
-`ShareMaster/SettingsView.swift` follows the same rule for the native Settings window: its cloud-sync polling task runs only while ShareMaster is active and exits as soon as the app resigns active.
+`ShareMaster/SettingsView.swift` follows the same rule for the native Settings window: it refreshes on open and when ShareMaster becomes active, without a timer.
 
 ## What still runs in the background
 
-User-started transfers are intentionally not tied to app focus. If the user starts an upload or download, `S3Service` should keep working until the transfer finishes or fails. The idle optimisation is aimed at passive work only: sync polling, object listings, folder browsing reloads, and preview thumbnail downloads.
+User-started transfers are intentionally not tied to app focus. If the user starts an upload or download, `S3Service` should keep working until the transfer finishes or fails. The idle optimisation is aimed at passive work only: cloud-config refresh, object listings, folder browsing reloads, and preview thumbnail downloads.
 
 ## Why this matters
 

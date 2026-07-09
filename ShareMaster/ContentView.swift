@@ -54,6 +54,8 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var recentItems: [RecentItem] = []
     @State private var isLoadingList = false
+    @State private var isAppActive = NSApp.isActive
+    @State private var listTask: Task<Void, Never>?
 
     // Redesign UI state: which row is selected (drives the blue highlight and
     // the inline action buttons) and whether the Destinations sidebar is
@@ -127,20 +129,35 @@ struct ContentView: View {
                 selectedDestinationID = destinations.first { $0.id == remembered }?.id ?? destinations.first?.id
             }
             restoreBrowseLocation()
-            await reloadExpanded()
+            if isAppActive {
+                await reloadExpanded()
+            }
         }
-        .task {
+        .task(id: isAppActive) {
             // The keychain posts no change notifications, so poll the cloud
-            // payload while the popover is open to pick up edits made on
-            // other devices. Cancelled when the popover closes. Cheap: one
-            // keychain read; adoptCloudIfNewer bails on same version.
+            // payload only while the popover is open and ShareMaster is active.
+            // When the app loses focus this task is cancelled, leaving App Nap
+            // with no sync timer to wake for.
+            guard isAppActive else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled, NSApp.isActive else { return }
                 config.refreshFromCloud()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            isAppActive = true
+            config.refreshFromCloud()
+            startForegroundReload()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            isAppActive = false
+            listTask?.cancel()
+            listTask = nil
+            isLoadingList = false
+        }
         .onChange(of: config.recentsExpanded) { _, expanded in
-            if expanded { Task { await reloadExpanded() } }
+            if expanded { startForegroundReload() }
         }
         .onChange(of: config.browserPaneMode) { _, _ in
             // Switching Browse ↔ Recent shows a different listing — clear and
@@ -149,7 +166,7 @@ struct ContentView: View {
             browseItems = []
             recentItems = []
             isLoadingList = true
-            Task { await reloadExpanded() }
+            startForegroundReload()
         }
         .onChange(of: selectedDestinationID) { _, newValue in
             // Just remember the focus. Navigation to the destination's root is
@@ -162,13 +179,13 @@ struct ContentView: View {
         }
         .onChange(of: browseSortOverride) { _, _ in
             if config.recentsExpanded && config.browserPaneMode == .browse {
-                Task { await loadBrowse() }
+                startForegroundBrowseLoad()
             }
         }
         .onChange(of: config.destinations) { _, _ in
             // Editing a destination (public URL base, link mode, expiry, bucket…)
             // invalidates the resolved links, so reload the visible section.
-            if config.recentsExpanded { Task { await reloadExpanded() } }
+            if config.recentsExpanded { startForegroundReload() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .statusItemDidReceiveDrop)) { note in
             // Files dropped directly on the menu bar icon go to the current
@@ -231,7 +248,7 @@ struct ContentView: View {
                     help: "Refresh",
                     isBusy: isLoadingList
                 ) {
-                    Task { await reloadExpanded() }
+                    startForegroundReload()
                 }
 
                 HeaderIconButton(systemName: "gearshape", help: "Settings") {
@@ -488,7 +505,7 @@ struct ContentView: View {
         let root = rootPrefix(for: destination)
         browsePrefix = root
         config.setBrowseLocation(root, for: destination.id)
-        Task { await reloadExpanded() }
+        startForegroundReload()
     }
 
     private func rootPrefix(for destination: Destination) -> String {
@@ -819,7 +836,7 @@ struct ContentView: View {
                     Button("Go Up") { browseBack() }
                         .buttonStyle(.borderless)
                 }
-                Button("Retry") { Task { await loadBrowse() } }
+                Button("Retry") { startForegroundBrowseLoad() }
                     .buttonStyle(.borderless)
             }
             .font(.caption)
@@ -1073,9 +1090,31 @@ struct ContentView: View {
 
     // MARK: - Loading
 
+    private func startForegroundReload() {
+        listTask?.cancel()
+        guard NSApp.isActive else {
+            isLoadingList = false
+            return
+        }
+        listTask = Task { @MainActor in
+            await reloadExpanded()
+        }
+    }
+
+    private func startForegroundBrowseLoad() {
+        listTask?.cancel()
+        guard NSApp.isActive else {
+            isLoadingList = false
+            return
+        }
+        listTask = Task { @MainActor in
+            await loadBrowse()
+        }
+    }
+
     /// Loads whichever mode is showing, if the section is expanded.
     private func reloadExpanded() async {
-        guard config.recentsExpanded else { return }
+        guard config.recentsExpanded, NSApp.isActive else { return }
         if isBrowse {
             await loadBrowse()
         } else {
@@ -1085,6 +1124,7 @@ struct ContentView: View {
 
     /// Recent (All): newest-first, merged across every visible destination.
     private func loadRecentAll() async {
+        guard NSApp.isActive else { return }
         guard !destinations.isEmpty else { recentItems = []; return }
         isLoadingList = true
         defer { isLoadingList = false }
@@ -1104,6 +1144,7 @@ struct ContentView: View {
             }
             for await items in group { merged.append(contentsOf: items) }
         }
+        guard !Task.isCancelled, NSApp.isActive else { return }
         recentItems = Array(
             merged.sorted { $0.object.lastModified > $1.object.lastModified }
                 .prefix(config.recentLimit)
@@ -1166,7 +1207,7 @@ struct ContentView: View {
         browseError = nil
         isLoadingList = true
         browsePrefix = prefix
-        Task { await loadBrowse() }
+        startForegroundBrowseLoad()
     }
 
     struct Breadcrumb: Identifiable {
@@ -1191,6 +1232,7 @@ struct ContentView: View {
     }
 
     private func loadBrowse() async {
+        guard NSApp.isActive else { return }
         guard let destination = selectedDestination,
               let cfg = config.s3Config(for: destination) else {
             browseFolders = []; browseItems = []; return
@@ -1215,8 +1257,10 @@ struct ContentView: View {
                 if token == nil { break }
             }
             let (folders, objects) = Self.sortedBrowse(folders: allFolders, objects: allObjects, by: sort)
+            guard !Task.isCancelled, NSApp.isActive else { return }
             browseFolders = folders
             browseItems = await resolveItems(objects, destination: destination, config: cfg)
+            guard !Task.isCancelled, NSApp.isActive else { return }
             browseError = nil
             browseErrorIsPermission = false
         } catch {
@@ -1272,7 +1316,7 @@ struct ContentView: View {
         Task {
             do {
                 try await S3Service.shared.createFolder(named: name, under: browsePrefix, config: cfg)
-                await loadBrowse()
+                if NSApp.isActive { await loadBrowse() }
             } catch {
                 newFolderError = error.localizedDescription
             }
@@ -1874,15 +1918,19 @@ final class ImageLoader: ObservableObject {
         task = Task {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
+                guard !Task.isCancelled else { return }
                 // Decode straight to a small thumbnail — a 12 MP photo decodes
                 // to ~48 MB of bitmap, all to draw a 32 pt row icon.
                 guard let image = Self.downsampledImage(from: data, maxPixel: 96) else {
+                    guard !Task.isCancelled else { return }
                     await MainActor.run { self.state = .failure }
                     return
                 }
+                guard !Task.isCancelled else { return }
                 ImageCache.shared.insert(image, for: url)
                 await MainActor.run { self.state = .success(Image(nsImage: image)) }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run { self.state = .failure }
             }
         }
@@ -1915,12 +1963,33 @@ struct CachedAsyncImage<Content: View>: View {
     let url: URL
     @ViewBuilder let content: (CachedImageState) -> Content
     @StateObject private var loader = ImageLoader()
+    @State private var isAppActive = NSApp.isActive
 
     var body: some View {
         content(loader.state)
-            .onAppear { loader.load(from: url) }
+            .onAppear {
+                if isAppActive {
+                    loader.load(from: url)
+                }
+            }
             .onChange(of: url) { _, newURL in
-                loader.load(from: newURL)
+                if isAppActive {
+                    loader.load(from: newURL)
+                }
+            }
+            .onChange(of: isAppActive) { _, active in
+                if active {
+                    loader.load(from: url)
+                } else {
+                    loader.cancel()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                isAppActive = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+                isAppActive = false
+                loader.cancel()
             }
             .onDisappear { loader.cancel() }
     }

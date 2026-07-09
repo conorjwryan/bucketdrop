@@ -230,6 +230,14 @@ struct ContentView: View {
                 .disabled(!isBrowse || selectedDestination == nil)
 
                 HeaderIconButton(
+                    systemName: config.temporaryPinPopover ? "pin.fill" : "pin",
+                    help: config.temporaryPinPopover ? "Unpin popover" : "Keep popover open",
+                    isActive: config.temporaryPinPopover
+                ) {
+                    config.temporaryPinPopover.toggle()
+                }
+
+                HeaderIconButton(
                     systemName: "arrow.clockwise",
                     help: "Refresh",
                     isBusy: isLoadingList
@@ -1568,6 +1576,7 @@ struct HeaderIconButton: View {
     let systemName: String
     let help: String
     var isBusy: Bool = false
+    var isActive: Bool = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -1580,17 +1589,17 @@ struct HeaderIconButton: View {
                 } else {
                     Image(systemName: systemName)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
                 }
             }
             .frame(width: 34, height: 28)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                    .fill(isActive ? Color.accentColor.opacity(0.12) : (isHovered ? Color.primary.opacity(0.08) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+                    .strokeBorder(isActive ? Color.accentColor.opacity(0.55) : Color(nsColor: .separatorColor), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

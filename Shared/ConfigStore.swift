@@ -254,6 +254,11 @@ extension Notification.Name {
     /// Posted when the menu-bar icon preference changes, so the status item
     /// can refresh its image live.
     static let menuBarIconStyleChanged = Notification.Name("ShareMaster.menuBarIconStyleChanged")
+
+    /// Posted when the current popover's live pin button changes. Unlike the
+    /// Settings preference, this is transient and resets when the popover
+    /// closes.
+    static let popoverPinStateChanged = Notification.Name("ShareMaster.popoverPinStateChanged")
 }
 
 // MARK: - Store
@@ -316,6 +321,15 @@ final class ConfigStore {
     /// (semitransient). Default false: it closes as soon as focus moves away.
     var pinPopover: Bool = false {
         didSet { defaults.set(pinPopover, forKey: Keys.pinPopover) }
+    }
+
+    /// Current-popover pin state. This is deliberately not persisted or synced:
+    /// the header pin button is a one-session override for keeping the visible
+    /// popover open while working elsewhere.
+    var temporaryPinPopover: Bool = false {
+        didSet {
+            NotificationCenter.default.post(name: .popoverPinStateChanged, object: nil)
+        }
     }
 
     /// How many recent uploads to show per listing. Keeps list traffic and

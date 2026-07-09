@@ -164,8 +164,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main
         ) { [weak self] _ in
-            guard ConfigStore.shared.pinPopover == false else { return }
-            self?.popover?.performClose(nil)
+            self?.closePopoverIfUnpinnedAndInactive()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.closePopoverIfUnpinnedAndInactive()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .popoverPinStateChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.applyPopoverBehavior()
         }
         
         // Setup popover. Content is built lazily on first open and torn down
@@ -190,6 +201,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Clear the drag flag so a later click-opened popover doesn't
             // auto-close after an unrelated upload.
             self?.popoverOpenedByDrag = false
+            ConfigStore.shared.temporaryPinPopover = false
             self?.schedulePopoverTeardown()
         }
     }
@@ -239,6 +251,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let popover = popover else { return }
 
         if popover.isShown {
+            ConfigStore.shared.temporaryPinPopover = false
             popover.performClose(nil)
         } else {
             popoverOpenedByDrag = false
@@ -256,9 +269,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             popover.contentViewController = makePopoverContentViewController()
         }
 
-        // Pinned popovers survive focus changes; unpinned ones close as soon
-        // as the user interacts with anything else.
-        popover.behavior = ConfigStore.shared.pinPopover ? .semitransient : .transient
+        applyPopoverBehavior()
 
         // Follow the system Light/Dark setting. Without this the popover
         // inherits the dark/vibrant appearance of the menu-bar button it's
@@ -288,6 +299,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 frameView.addSubview(bgView, positioned: .below, relativeTo: frameView)
                 popoverBackgroundView = bgView
             }
+        }
+    }
+
+    private var shouldKeepPopoverOpen: Bool {
+        ConfigStore.shared.pinPopover || ConfigStore.shared.temporaryPinPopover
+    }
+
+    private func applyPopoverBehavior() {
+        popover?.behavior = shouldKeepPopoverOpen ? .semitransient : .transient
+    }
+
+    private func closePopoverIfUnpinnedAndInactive() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.popover?.isShown == true,
+                  self.shouldKeepPopoverOpen == false,
+                  NSApp.isActive == false else { return }
+            self.popover?.performClose(nil)
         }
     }
     

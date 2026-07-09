@@ -16,7 +16,7 @@ Those PNGs are **generated from the colour logo art** (`LogoBox` / `LogoPlane`):
 
 ## Popover
 
-A Finder-like file browser laid out top-to-bottom: **header** (brand logo + word mark, then the New Folder / Refresh / Settings / Quit icon buttons) → **full-width breadcrumb bar** → **body** (destinations sidebar on the left, file table on the right) → **drop zone** pinned at the bottom. Fixed **780 × 580 pt**, driven by `NSHostingController.sizingOptions = [.preferredContentSize]`.
+A Finder-like file browser laid out top-to-bottom: **header** (brand logo + word mark, then the New Folder / Pin / Refresh / Settings / Quit icon buttons) → **full-width breadcrumb bar** → **body** (destinations sidebar on the left, file table on the right) → **drop zone** pinned at the bottom. Fixed **780 × 580 pt**, driven by `NSHostingController.sizingOptions = [.preferredContentSize]`.
 
 The brand logo (`ShareMasterLogo`) renders the `LogoPlane` asset beside the word mark. Tapping the **word mark** is still the hidden reveal gesture for hidden destinations.
 
@@ -37,7 +37,7 @@ The brand logo (`ShareMasterLogo`) renders the `LogoPlane` asset beside the word
 
 **Idle / App Nap behaviour (important for battery):** the app relies on macOS App Nap, but it also has to avoid keeping itself awake. There is no periodic iCloud Keychain sync poll. `showPopover()` pulls cloud config when the menu-bar item opens, `ContentView`/`SettingsView` refresh when ShareMaster becomes active, Browse and Recent (All) reloads are routed through cancellable foreground list tasks, stale listing completions do not update the UI after focus is lost, and thumbnail URLSession work is cancelled on resign-active. Explicit uploads/downloads still continue while unfocused; only passive sync/list/preview work goes quiet. See [Battery optimisations](battery-optimisations.md) for the focused note.
 
-**Pin setting:** `ConfigStore.pinPopover` (General settings) switches popover behaviour between `.transient` (default, closes on outside click) and `.semitransient` (stays up). Applied on every `showPopover()`.
+**Pin behaviour:** `ConfigStore.pinPopover` (General settings) still provides the saved default for keeping the popover open, but the header also has a transient pin button (`ConfigStore.temporaryPinPopover`). The button shows `pin` when off and `pin.fill` with an accent treatment when engaged. It only affects the currently open popover, resets on close, and is ORed with the saved setting when AppDelegate chooses `.transient` versus `.semitransient`. After sidebar/context menus finish tracking, AppDelegate re-checks this effective pin state and closes the popover if the app is inactive and neither pin is engaged.
 
 ## Drag and drop
 

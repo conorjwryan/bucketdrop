@@ -76,6 +76,7 @@ struct ContentView: View {
     // bar) so it can offer permission-specific guidance and a retry.
     @State private var browseError: String?
     @State private var browseErrorIsPermission = false
+    @State private var pendingDestinationRemoval: Destination?
 
     // Download/Preview state
     @State private var downloadingObjectKey: String?
@@ -197,6 +198,24 @@ struct ContentView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(newFolderError ?? "")
+        }
+        .confirmationDialog(
+            "Remove \"\(pendingDestinationRemoval?.name.isEmpty == false ? pendingDestinationRemoval!.name : "Untitled")\" destination?",
+            isPresented: Binding(
+                get: { pendingDestinationRemoval != nil },
+                set: { if !$0 { pendingDestinationRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove Destination", role: .destructive) {
+                if let destination = pendingDestinationRemoval {
+                    removeDestination(destination)
+                }
+                pendingDestinationRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDestinationRemoval = nil }
+        } message: {
+            Text("This only removes the destination from ShareMaster. It does not delete any files stored at the remote destination.")
         }
     }
 
@@ -461,6 +480,10 @@ struct ContentView: View {
                     openSettings()
                     openNativeSettings()
                 }
+                Divider()
+                Button("Remove Destination", role: .destructive) {
+                    pendingDestinationRemoval = destination
+                }
             }
             .onDrop(of: [.fileURL, .image], isTargeted: Binding(
                 get: { dropTargetID == destination.id },
@@ -500,6 +523,16 @@ struct ContentView: View {
         browsePrefix = root
         config.setBrowseLocation(root, for: destination.id)
         startForegroundReload()
+    }
+
+    private func removeDestination(_ destination: Destination) {
+        config.deleteDestination(id: destination.id)
+        let remaining = destinations
+        selectedDestinationID = remaining.first?.id
+        browsePrefix = remaining.first.map(rootPrefix(for:)) ?? ""
+        browseFolders = []
+        browseItems = []
+        recentItems = []
     }
 
     private func rootPrefix(for destination: Destination) -> String {

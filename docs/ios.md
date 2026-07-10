@@ -9,7 +9,7 @@ On iOS, `ConfigStore` reads/writes the App Group `group.com.cjwr.ShareMaster` fo
 ## Main app structure
 
 - `ShareMasterIOSApp.swift` — entry point; also warms `NetworkMonitor` at launch (see below).
-- `DestinationListView` — root list of destinations → navigates to `BucketBrowserView`. The `NavigationStack` here carries the upload status bar and all upload alerts.
+- `DestinationListView` — root list of destinations → navigates to `BucketBrowserView`. Long-press a destination to choose **Remove Destination**; the confirmation makes clear this removes only ShareMaster's saved access and does not delete remote files. The `NavigationStack` here carries the upload status bar and all upload alerts.
 - `BucketBrowserView` — see next section; its toolbar also carries a "…" menu for creating a destination from the open folder (or jumping to the matching destination's settings).
 - `IOSSettingsView` — account/destination editors (with Duplicate), account transfer defaults, per-destination transfer overrides and default browser sort, Sync section, cellular and preview toggles.
 - `UploadMenu` — the toolbar "+": Photo Library (PhotosPicker/`Transferable`, copied to a temp file) and Files (`fileImporter`, security-scoped temp copy). Inside a bucket browser it also offers **New Folder** (hidden when the menu has no fixed destination, i.e. on the root list): a name prompt → `S3Service.createFolder` under the currently open prefix → `onUploaded()` refreshes the listing. See [Transfer engine](transfer-engine.md#creating-folders) for the placeholder-object mechanism and the R2 quirk it works around.

@@ -526,10 +526,13 @@ struct ContentView: View {
     }
 
     private func removeDestination(_ destination: Destination) {
+        let removedSelectedDestination = selectedDestinationID == destination.id
         config.deleteDestination(id: destination.id)
-        let remaining = destinations
-        selectedDestinationID = remaining.first?.id
-        browsePrefix = remaining.first.map(rootPrefix(for:)) ?? ""
+        guard removedSelectedDestination else { return }
+
+        let replacement = destinations.first
+        selectedDestinationID = replacement?.id
+        browsePrefix = replacement.map(rootPrefix(for:)) ?? ""
         browseFolders = []
         browseItems = []
         recentItems = []

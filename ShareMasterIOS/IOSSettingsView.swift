@@ -20,6 +20,7 @@ struct IOSSettingsView: View {
     @State private var editingDestination: Destination?
     @State private var addingDestination = false
     @State private var duplicatingDestination: Destination?
+    @State private var pendingDestinationRemoval: Destination?
 
     var body: some View {
         @Bindable var config = config
@@ -111,9 +112,9 @@ struct IOSSettingsView: View {
                         }
                         .swipeActions {
                             Button(role: .destructive) {
-                                config.deleteDestination(id: destination.id)
+                                pendingDestinationRemoval = destination
                             } label: {
-                                Label("Delete", systemImage: "trash")
+                                Label("Remove", systemImage: "trash")
                             }
                         }
                         .contextMenu {
@@ -156,6 +157,24 @@ struct IOSSettingsView: View {
             }
             .sheet(item: $duplicatingDestination) { destination in
                 DestinationEditorView(duplicating: destination)
+            }
+            .confirmationDialog(
+                "Remove \"\(pendingDestinationRemoval?.name.isEmpty == false ? pendingDestinationRemoval!.name : "Untitled")\" destination?",
+                isPresented: Binding(
+                    get: { pendingDestinationRemoval != nil },
+                    set: { if !$0 { pendingDestinationRemoval = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Destination", role: .destructive) {
+                    if let destination = pendingDestinationRemoval {
+                        config.deleteDestination(id: destination.id)
+                    }
+                    pendingDestinationRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDestinationRemoval = nil }
+            } message: {
+                Text("This only removes the destination from ShareMaster. It does not delete any files stored at the remote destination.")
             }
         }
     }

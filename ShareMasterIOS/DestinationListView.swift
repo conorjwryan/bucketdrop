@@ -14,6 +14,7 @@ struct DestinationListView: View {
     @State private var uploads = UploadManager.shared
     @State private var downloads = DownloadManager.shared
     @State private var showSettings = false
+    @State private var pendingDestinationRemoval: Destination?
 
     private var visibleDestinations: [Destination] {
         config.visibleDestinations
@@ -31,6 +32,11 @@ struct DestinationListView: View {
                     List(visibleDestinations) { destination in
                         NavigationLink(value: destination) {
                             DestinationRow(destination: destination, config: config)
+                        }
+                        .contextMenu {
+                            Button("Remove Destination", role: .destructive) {
+                                pendingDestinationRemoval = destination
+                            }
                         }
                     }
                 }
@@ -67,6 +73,23 @@ struct DestinationListView: View {
             }
             .sheet(isPresented: $showSettings) {
                 IOSSettingsView()
+            }
+            .alert(
+                "Remove \"\(pendingDestinationRemoval?.name.isEmpty == false ? pendingDestinationRemoval!.name : "Untitled")\" destination?",
+                isPresented: Binding(
+                    get: { pendingDestinationRemoval != nil },
+                    set: { if !$0 { pendingDestinationRemoval = nil } }
+                )
+            ) {
+                Button("Remove Destination", role: .destructive) {
+                    if let destination = pendingDestinationRemoval {
+                        config.deleteDestination(id: destination.id)
+                    }
+                    pendingDestinationRemoval = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDestinationRemoval = nil }
+            } message: {
+                Text("This only removes the destination from ShareMaster. It does not delete any files stored at the remote destination.")
             }
             .onChange(of: scenePhase) { _, phase in
                 // Pick up config synced from the Mac via iCloud Keychain.
